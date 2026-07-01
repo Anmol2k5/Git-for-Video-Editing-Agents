@@ -1,112 +1,98 @@
-# EditVCS — Universal Version Control for Creative Editing
+# EditVCS ✦
 
-**Git for every creative tool — designed for both AI agents and humans.**
+**Pull requests for AI video edits.**
 
-EditVCS brings version control to creative editing workflows (Figma, Premiere, After Effects, Blender, etc.) by tracking **edit decisions as lightweight JSON metadata** instead of raw media files. Inspired by [vit](https://github.com/LucasHJin/vit).
+EditVCS is a version control system for non-linear editors (NLEs). It captures structured edits from human editors and AI agents, creates reviewable change requests, shows a semantic video diff, and lets a human approve or selectively apply the changes.
 
-## ✨ Key Features
+## The Architecture (Phase 1: Read-Only Live Import)
 
-- **Domain-Split JSON** — Edit decisions are organized by domain (layout, style, typography, animation, audio, assets, metadata). Different roles edit different files, enabling clean merges.
-- **Agent-First Design** — AI agents are first-class citizens. Track which model made a change, its reasoning, confidence, and tool calls.
-- **Semantic Diffs** — Human-readable change descriptions like "Moved 'Hero Image' from (100,200) to (150,250)" instead of raw JSON diffs.
-- **Beautiful Dashboard** — Glassmorphic dark-mode web UI for browsing history, diffs, branches, and agent activity.
-- **Review Workflow** — Approve or reject agent-proposed changes before they land on main.
-- **Plugin Architecture** — Adapter system for adding support for any creative tool.
+EditVCS currently integrates directly with **DaVinci Resolve Studio**. It pulls a live snapshot of your active timeline, normalizes it into domain files (Cuts, Audio, Captions, Color), and powers a visual dashboard.
 
-## 🚀 Quick Start
+```mermaid
+graph TD
+    A[DaVinci Resolve Studio] -->|Python Scripting API| B(Live Import Bridge)
+    B -->|Normalized JSON| C[EditVCS Engine]
+    C -->|Semantic Diffing| D[Review Dashboard]
+    E[AI Agent] -->|Proposes Cut| C
+```
+
+## What's Supported (Phase 1)
+- ✅ **Reading Active Timeline:** Extracting video, audio, captions, and markers from live Resolve instances.
+- ✅ **Snapshotting:** Storing deterministic versions of your timeline without copying heavy media files.
+- ✅ **Semantic Diffs:** Intelligent string-based summaries of changes (e.g., `"Trimmed clip 'A-Roll.mp4' by 24 frames."`).
+- ✅ **Review Proposals:** Creating GitHub-style pull requests for AI agents to submit edits for review.
+- ✅ **Dashboard Sync:** A local React/Vanilla web app that syncs with Resolve to show your timeline health.
+
+## What's NOT Supported (Phase 1)
+- ❌ **Editing an existing Resolve timeline:** Resolve's API does not support mutating an existing timeline's clips directly.
+- ❌ **Applying agent edits into Resolve:** You can approve them in the EditVCS dashboard, but currently you must manually replicate the cuts in Resolve.
+- ❌ **Complex feature preservation:** Multicam, compound clips, and complex Fusion graphs are not fully round-tripped yet.
+
+---
+
+## 🚀 PHASE 2 — SAFE WRITE-BACK (Coming Next)
+In Phase 2, we will implement **Safe Write-Back**. EditVCS will export approved proposals as a new FCPXML/OTIO package and ask Resolve to import it as a **NEW** timeline. 
+* EditVCS will **never** overwrite your active timeline.
+* The original timeline is preserved untouched.
+* Explicit user confirmation will be required before any import.
+
+---
+
+## Setup & Installation
+
+### Supported Platforms
+- Windows 10/11
+- macOS 12+
+- Linux (CentOS/Ubuntu)
+
+### DaVinci Resolve Prerequisites
+You must have **DaVinci Resolve Studio** installed to use the live Python Scripting API.
+Ensure Python 3.6+ is installed on your system.
+
+If the script fails to find Resolve's modules automatically, set the environment variable:
+- **Windows:** `set EDITVCS_RESOLVE_SCRIPT_PATH="%PROGRAMDATA%\Blackmagic Design\DaVinci Resolve\Support\Developer\Scripting\Modules"`
+- **macOS:** `export EDITVCS_RESOLVE_SCRIPT_PATH="/Library/Application Support/Blackmagic Design/DaVinci Resolve/Developer/Scripting/Modules"`
+
+### Initializing a Project
 
 ```bash
-# Install dependencies
+# 1. Initialize a new EditVCS tracking folder in your directory
+editvcs init "Podcast Episode 14" --adapter davinci-resolve
+```
+
+### Live Syncing
+Make sure DaVinci Resolve is open, a project is loaded, and a timeline is active.
+
+```bash
+# Pulls the active timeline and commits it
+editvcs import --live
+
+# Optional flags:
+# editvcs import --live --redact-media-paths
+```
+
+If you do not have DaVinci Resolve installed, you can test EditVCS using fallback mock fixtures:
+```bash
+editvcs import ./fixtures/resolve/podcast_episode_base.json
+```
+
+### Review Dashboard
+Start the local review server to approve or reject Edit Proposals:
+```bash
+editvcs serve
+```
+Open `http://localhost:3333` in your browser.
+
+---
+
+## Demo Automation
+If you just want to see the whole system working without DaVinci Resolve, run the setup script!
+
+```bash
 npm install
-
-# Launch the web dashboard
-npm run dashboard
-# Open http://localhost:3333
-
-# Build the CLI
 npm run build
+npx tsx scripts/setup-demo.ts
+cd demo_project
+node "../dist/cli/index.js" serve
 ```
-
-## 📁 Project Structure
-
-```
-editvcs/
-├── src/
-│   ├── core/
-│   │   ├── types.ts          # Domain models (Actor, Commit, Domain, Diff, Merge)
-│   │   ├── engine.ts         # VCS engine wrapping git
-│   │   ├── differ.ts         # Semantic diffing engine
-│   │   └── merger.ts         # Three-way merge with conflict detection
-│   ├── adapters/
-│   │   ├── base.ts           # Adapter interface & registry
-│   │   └── generic.ts        # Generic JSON adapter
-│   └── cli/
-│       └── index.ts          # CLI commands
-├── dashboard/
-│   ├── index.html            # Dashboard shell
-│   ├── index.css             # Dark glassmorphic design system
-│   └── app.js                # Interactive dashboard with mock data
-├── package.json
-└── tsconfig.json
-```
-
-## 🎯 Domain System
-
-| Domain | File | Contents | Typical Owner |
-|--------|------|----------|---------------|
-| 📐 Layout | `layout.json` | Positions, sizes, transforms, hierarchies | Designer / Editor |
-| 🎨 Style | `style.json` | Colors, gradients, effects, fills | Colorist / Designer |
-| ✏️ Typography | `typography.json` | Fonts, text content, text styles | Copywriter |
-| 🎬 Animation | `animation.json` | Keyframes, transitions, timing | Animator |
-| 🔊 Audio | `audio.json` | Audio levels, clips, mixing | Sound Designer |
-| 📦 Assets | `assets.json` | Asset references, links, media paths | Anyone |
-| ⚙️ Metadata | `metadata.json` | Project settings, canvas size, framerate | Rarely changed |
-
-## 🤖 Agent Support
-
-Agents commit with rich metadata:
-
-```bash
-editvcs commit -m "Auto-generate color grade" \
-  --agent \
-  --agent-name "ColorSense" \
-  --agent-model "gemini-2.5-pro" \
-  --confidence 0.94 \
-  --reasoning "Applied cinematic warm tone based on project brief"
-```
-
-The dashboard shows agent contributions with:
-- 🧠 Reasoning explanations
-- 🔧 Tool call breakdowns
-- 📊 Confidence scores
-- ✅ Approval/rejection workflow
-
-## 📜 CLI Commands
-
-```
-editvcs init <name>              # Initialize new project
-editvcs commit -m "message"      # Commit current state
-editvcs commit --agent           # Commit as an AI agent
-editvcs log                      # View history
-editvcs diff                     # Semantic diff
-editvcs branch <name>            # Create branch
-editvcs checkout <name>          # Switch branch
-editvcs status                   # Show changes
-editvcs dashboard                # Launch web dashboard
-editvcs import <file>            # Import JSON state
-editvcs export                   # Export current state
-```
-
-## 🎨 Dashboard
-
-The web dashboard provides 5 views:
-
-1. **Overview** — Stats, activity feed, collaborator list, domain heatmap, pending reviews
-2. **Timeline** — Commit history with branch graph, filterable by human/agent
-3. **Diff View** — Domain-tabbed semantic diffs with human-readable descriptions
-4. **Branches** — Branch management with merge status
-5. **Agent Activity** — Agent leaderboard, confidence scores, tool call breakdowns
-
-## License
-
-MIT
+This generates a mock base timeline, creates an agent branch, commits a trim + audio boost on behalf of "HookAgent", and opens a Review Request!

@@ -58,14 +58,44 @@ program
 
 program
   .command("import")
-  .argument("<file>", "JSON file to import")
-  .description("Import a JSON state file (DaVinci Resolve export)")
-  .action(async (file: string) => {
+  .argument("[file]", "JSON file to import (not needed if --live is used)")
+  .option("--live", "Import from active DaVinci Resolve instance")
+  .option("--redact-media-paths", "Redact local file paths from output")
+  .description("Import a JSON state file or live DaVinci Resolve timeline")
+  .action(async (file?: string, options?: any) => {
     const engine = new EditVCSEngine(process.cwd());
-    const filePath = resolve(file);
-    const state = JSON.parse(readFileSync(filePath, "utf-8"));
-    await engine.importState(state);
-    console.log(chalk.green("✓ State imported successfully."));
+    let state;
+    
+    if (options.live) {
+      console.log(chalk.blue("📡 Connecting to live DaVinci Resolve instance..."));
+      state = { live: true, redactMediaPaths: options.redactMediaPaths };
+    } else {
+      if (!file) {
+        console.log(chalk.red("Error: You must provide a file path or use the --live flag."));
+        process.exit(1);
+      }
+      const filePath = resolve(file);
+      state = JSON.parse(readFileSync(filePath, "utf-8"));
+    }
+
+    const snapshot = await engine.importState(state);
+    
+    if (options.live) {
+      const meta = snapshot.domains.find((d: any) => d.domain === "metadata")?.data;
+      const cuts = snapshot.domains.find((d: any) => d.domain === "cuts")?.data;
+      const audio = snapshot.domains.find((d: any) => d.domain === "audio")?.data;
+      const markers = snapshot.domains.find((d: any) => d.domain === "markers")?.data;
+
+      console.log(chalk.green(`\n✓ Imported live DaVinci Resolve timeline:`));
+      console.log(`  Project: ${meta?.projectName || "Unknown"}`);
+      console.log(`  Timeline: ${meta?.timelineName || "Unknown"}`);
+      console.log(`  Timeline items (Video): ${Object.keys(cuts || {}).length}`);
+      console.log(`  Timeline items (Audio): ${Object.keys(audio || {}).length}`);
+      console.log(`  Markers: ${Object.keys(markers || {}).length}`);
+      console.log(`  Snapshot: ${snapshot.id.substring(0, 8)}`);
+    } else {
+      console.log(chalk.green(`✓ State imported successfully. Snapshot: ${snapshot.id.substring(0, 8)}`));
+    }
   });
 
 program

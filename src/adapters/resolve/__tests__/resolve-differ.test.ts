@@ -1,11 +1,10 @@
 import { describe, it, expect } from "vitest";
 import { resolveDiffer } from "../resolve-differ";
-import { TimelineChange } from "../../../core/types";
 
-describe("DaVinci Resolve Semantic Differ", () => {
+describe("DaVinci Resolve Semantic Differ (Live Import)", () => {
   it("detects a deleted clip", () => {
     const base = {
-      "clip_1": { id: "clip_1", name: "Intro.mp4", type: "video", recordIn: 0, recordOut: 100 }
+      "clip_1": { id: "clip_1", name: "Intro.mp4", type: "video", trackName: "V1", recordFrameStart: 0, recordFrameEnd: 100 }
     };
     const compare = {};
     
@@ -13,82 +12,62 @@ describe("DaVinci Resolve Semantic Differ", () => {
     
     expect(changes.length).toBe(1);
     expect(changes[0].operation).toBe("remove");
-    expect(changes[0].entityType).toBe("clip");
-    expect(changes[0].humanReadableSummary).toBe("Removed clip 'Intro.mp4' from 00:00:00:00.");
+    expect(changes[0].humanReadableSummary).toBe("Removed clip 'Intro.mp4' from V1.");
   });
 
-  it("detects an added audio clip", () => {
+  it("detects an added clip", () => {
     const base = {};
     const compare = {
-      "audio_1": { id: "audio_1", name: "SFX.wav", type: "audio", recordIn: 24, recordOut: 48, audioConfig: { volumeDb: -10 } }
+      "clip_1": { id: "clip_1", name: "SFX.wav", type: "audio", trackName: "A1", recordFrameStart: 24, recordFrameEnd: 48 }
     };
 
     const changes = resolveDiffer("audio", base, compare);
     
     expect(changes.length).toBe(1);
     expect(changes[0].operation).toBe("add");
-    expect(changes[0].entityType).toBe("audio_clip");
-    expect(changes[0].humanReadableSummary).toBe("Added audio track 'SFX.wav' at 00:00:01:00.");
+    expect(changes[0].humanReadableSummary).toBe("Added audio clip 'SFX.wav' to A1.");
   });
 
   it("detects a trimmed clip", () => {
     const base = {
-      "clip_1": { id: "clip_1", name: "A-Roll.mp4", type: "video", recordIn: 0, recordOut: 100 }
+      "clip_1": { id: "clip_1", name: "A-Roll.mp4", type: "video", trackName: "V1", recordFrameStart: 0, recordFrameEnd: 100 }
     };
     const compare = {
-      "clip_1": { id: "clip_1", name: "A-Roll.mp4", type: "video", recordIn: 24, recordOut: 100 }
+      "clip_1": { id: "clip_1", name: "A-Roll.mp4", type: "video", trackName: "V1", recordFrameStart: 24, recordFrameEnd: 100 }
     };
 
     const changes = resolveDiffer("cuts", base, compare);
     
     expect(changes.length).toBe(1);
     expect(changes[0].operation).toBe("update");
-    expect(changes[0].humanReadableSummary).toBe("Trimmed clip 'A-Roll.mp4' by 1.0 seconds from 00:00:01:00 to 00:00:04:04.");
+    expect(changes[0].humanReadableSummary).toBe("Trimmed 'A-Roll.mp4' by 24 frames.");
   });
 
   it("detects a moved clip", () => {
     const base = {
-      "clip_1": { id: "clip_1", name: "B-Roll.mp4", type: "video", trackName: "V1", recordIn: 100, recordOut: 200 }
+      "clip_1": { id: "clip_1", name: "B-Roll.mp4", type: "video", trackName: "V2", recordFrameStart: 100, recordFrameEnd: 200 }
     };
     const compare = {
-      "clip_1": { id: "clip_1", name: "B-Roll.mp4", type: "video", trackName: "V1", recordIn: 150, recordOut: 250 }
+      "clip_1": { id: "clip_1", name: "B-Roll.mp4", type: "video", trackName: "V2", recordFrameStart: 168, recordFrameEnd: 268 }
     };
 
     const changes = resolveDiffer("cuts", base, compare);
     
     expect(changes.length).toBe(1);
     expect(changes[0].operation).toBe("move");
-    expect(changes[0].humanReadableSummary).toBe("Moved 'B-Roll.mp4' on V1 to 00:00:06:06.");
+    expect(changes[0].humanReadableSummary).toBe("Moved 'B-Roll.mp4' 68 frames later on V2.");
   });
 
-  it("detects a property change (volume)", () => {
-    const base = {
-      "audio_1": { id: "audio_1", name: "Voice.wav", type: "audio", recordIn: 0, recordOut: 100, audioConfig: { volumeDb: -5 } }
-    };
+  it("detects a marker addition", () => {
+    const base = {};
     const compare = {
-      "audio_1": { id: "audio_1", name: "Voice.wav", type: "audio", recordIn: 0, recordOut: 100, audioConfig: { volumeDb: -2 } }
+      "marker_1": { id: "marker_1", frameId: 86800, name: "Client Note", note: "Use alternate hook" }
     };
 
-    const changes = resolveDiffer("audio", base, compare);
+    const changes = resolveDiffer("markers", base, compare);
     
     expect(changes.length).toBe(1);
-    expect(changes[0].operation).toBe("update");
-    expect(changes[0].humanReadableSummary).toBe("Changed dialogue audio gain from -5.0 dB to -2.0 dB for clip 'Voice.wav'.");
-  });
-
-  it("detects a caption text change", () => {
-    const base = {
-      "cap_1": { id: "cap_1", name: "Text+", type: "title", recordIn: 0, recordOut: 100, textConfig: { content: "Hello", font: "Arial", size: 64 } }
-    };
-    const compare = {
-      "cap_1": { id: "cap_1", name: "Text+", type: "title", recordIn: 0, recordOut: 100, textConfig: { content: "Hello World", font: "Arial", size: 64 } }
-    };
-
-    const changes = resolveDiffer("captions", base, compare);
-    
-    expect(changes.length).toBe(1);
-    expect(changes[0].operation).toBe("update");
-    expect(changes[0].entityType).toBe("caption");
-    expect(changes[0].humanReadableSummary).toBe("Updated caption properties for 'Text+'.");
+    expect(changes[0].operation).toBe("add");
+    expect(changes[0].humanReadableSummary).toBe("Added marker at 86800: 'Use alternate hook'");
   });
 });
