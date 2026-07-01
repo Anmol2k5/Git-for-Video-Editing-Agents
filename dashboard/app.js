@@ -18,8 +18,38 @@ class EditVCSDashboard {
     
     // Initial fetch
     await this.fetchData();
+    const btnRefresh = document.getElementById('btn-refresh');
+    const syncResolveBtn = document.getElementById('sync-resolve-btn');
     
-    document.getElementById("btn-refresh").addEventListener("click", () => this.fetchData());
+    if (btnRefresh) {
+        btnRefresh.addEventListener('click', () => {
+            this.fetchData();
+        });
+    }
+
+    if (syncResolveBtn) {
+        syncResolveBtn.addEventListener('click', async () => {
+            const originalText = syncResolveBtn.innerText;
+            syncResolveBtn.innerText = "Syncing...";
+            syncResolveBtn.disabled = true;
+            try {
+                // Assuming project ID is "current" for single-project MVP
+                const res = await fetch('http://localhost:3333/api/projects/current/sync-resolve', { method: 'POST' });
+                if (!res.ok) {
+                    const err = await res.json();
+                    alert(`Sync failed: ${err.error || 'Unknown error'}`);
+                } else {
+                    document.getElementById('last-sync-time').innerText = "Last synced: Just now";
+                    await this.fetchData();
+                }
+            } catch (e) {
+                alert(`Network error during sync: ${e.message}`);
+            } finally {
+                syncResolveBtn.innerText = originalText;
+                syncResolveBtn.disabled = false;
+            }
+        });
+    }
   }
 
   async fetchData() {

@@ -1,0 +1,2 @@
+# No external dependencies required for the basic DaVinci Resolve Scripting API.
+# It uses standard library and the DaVinciResolveScript module provided by Blackmagic Design.

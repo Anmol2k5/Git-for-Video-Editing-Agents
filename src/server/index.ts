@@ -1,8 +1,10 @@
 import express from "express";
 import cors from "cors";
-import * as path from "path";
-import { EditVCSEngine } from "../core/engine.js";
+import path from "path";
+import fs from "fs";
 import { ProposalManager } from "../core/proposals.js";
+import { EditVCSEngine } from "../core/engine.js";
+import { ResolveLiveImporter } from "../adapters/resolve/resolve-live-import.js";
 
 export function startServer(repoPath: string, port: number = 3333) {
   const app = express();
@@ -13,8 +15,28 @@ export function startServer(repoPath: string, port: number = 3333) {
   const proposalManager = new ProposalManager(repoPath);
 
   // Serve static dashboard
-  const dashboardPath = path.join(repoPath, "dashboard");
-  app.use(express.static(dashboardPath));
+  const dashboardDir = path.join(process.cwd(), "dashboard");
+  if (fs.existsSync(dashboardDir)) {
+    app.use(express.static(dashboardDir));
+  }
+
+  // ─── Resolve Sync ────────────────────────────────────────────────────────────
+  app.post("/api/projects/:id/sync-resolve", async (req, res) => {
+    try {
+      const engine = new EditVCSEngine(process.cwd());
+      const importer = new ResolveLiveImporter();
+      const result = await importer.runImport();
+      
+      if (!result.success) {
+        return res.status(500).json({ error: result.error, errorType: result.errorType });
+      }
+
+      const snapshot = await engine.importState({ live: true }); // Uses internal live flow
+      res.json({ success: true, snapshotId: snapshot.id });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
 
   // ─── API Routes ─────────────────────────────────────────────────────────
 

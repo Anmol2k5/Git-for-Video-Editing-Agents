@@ -94,7 +94,15 @@
           <span id="header-text">Project Overview</span>
         </div>
         <div class="header-actions">
-          <button class="btn btn-ghost btn-sm" id="btn-refresh" title="Refresh">🔄 Refresh</button>
+           <div class="health-status" style="display:flex; align-items:center; gap:8px;">
+              <span class="status-indicator" style="width:8px; height:8px; border-radius:50%; background-color:#22c55e;"></span>
+              <div class="health-info" style="display:flex; flex-direction:column; text-align:right;">
+                 <span class="health-title" style="font-size:0.75rem; font-weight:700; color:var(--text-secondary)">LIVE RESOLVE IMPORT</span>
+                 <span class="health-subtitle" id="last-sync-time" style="font-size:0.7rem; color:var(--text-tertiary)">Last synced: Unknown</span>
+              </div>
+              <button class="btn btn-secondary btn-sm" id="sync-resolve-btn" style="margin-left:12px;">Sync from Resolve</button>
+           </div>
+           <button class="btn btn-ghost btn-sm" id="btn-refresh" title="Refresh" style="margin-left:12px;">🔄 Refresh</button>
         </div>
       </header>
 
