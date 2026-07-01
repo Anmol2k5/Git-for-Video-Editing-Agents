@@ -1,7 +1,7 @@
 import * as fs from "fs";
 import * as path from "path";
-import { EditProposal, ChangeGroup, Actor, AgentMetadata, TimelineChange } from "./types";
-import { resolveDiffer } from "../adapters/resolve/resolve-differ";
+import { EditProposal, ChangeGroup, Actor, AgentMetadata, TimelineChange } from "./types.js";
+import { resolveDiffer } from "../adapters/resolve/resolve-differ.js";
 
 export class ProposalManager {
   private proposalsDir: string;

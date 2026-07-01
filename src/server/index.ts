@@ -1,8 +1,8 @@
 import express from "express";
 import cors from "cors";
 import * as path from "path";
-import { EditVCSEngine } from "../core/engine";
-import { ProposalManager } from "../core/proposals";
+import { EditVCSEngine } from "../core/engine.js";
+import { ProposalManager } from "../core/proposals.js";
 
 export function startServer(repoPath: string, port: number = 3333) {
   const app = express();

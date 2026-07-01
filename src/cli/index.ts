@@ -68,6 +68,52 @@ program
     console.log(chalk.green("✓ State imported successfully."));
   });
 
+program
+  .command("commit")
+  .option("-m, --message <message>", "Commit message")
+  .option("--agent", "Commit as an AI agent")
+  .option("--agent-name <name>", "Agent name", "AI Assistant")
+  .option("--agent-model <model>", "Agent model", "unknown")
+  .option("--reasoning <text>", "Agent reasoning for the change")
+  .option("--confidence <score>", "Agent confidence score (0-1)")
+  .description("Commit current state")
+  .action(async (options) => {
+    const engine = new EditVCSEngine(process.cwd());
+    const message = options.message || "Update";
+    const actor: Actor = options.agent
+      ? { type: "agent", name: options.agentName, model: options.agentModel, reasoning: options.reasoning, confidence: options.confidence ? parseFloat(options.confidence) : undefined }
+      : { type: "human", name: process.env.USER || process.env.USERNAME || "User" };
+    const commit = await engine.commit(message, actor);
+    console.log(chalk.green(`✓ Committed: ${commit.shortId}`));
+  });
+
+program
+  .command("branch")
+  .argument("[name]", "Branch name to create")
+  .description("List branches or create a new branch")
+  .action(async (name?: string) => {
+    const engine = new EditVCSEngine(process.cwd());
+    if (name) {
+      await engine.createBranch(name);
+      console.log(chalk.green(`✓ Created and switched to branch '${name}'`));
+    } else {
+      const branches = await engine.listBranches();
+      for (const branch of branches) {
+        console.log(`${branch.current ? '* ' : '  '}${branch.name}`);
+      }
+    }
+  });
+
+program
+  .command("checkout")
+  .argument("<name>", "Branch name to switch to")
+  .description("Switch to a branch")
+  .action(async (name: string) => {
+    const engine = new EditVCSEngine(process.cwd());
+    await engine.checkout(name);
+    console.log(chalk.green(`✓ Switched to branch '${name}'`));
+  });
+
 // ─── Proposals ───────────────────────────────────────────────────────
 
 const proposalCmd = program.command("proposal").description("Manage edit proposals (pull requests)");
