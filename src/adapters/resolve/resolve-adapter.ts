@@ -1,7 +1,7 @@
-import { Adapter, ValidationResult } from "../base";
-import { ProjectConfig, DomainFile, TimelineSnapshot, RESOLVE_DOMAINS, DomainConfig } from "../../core/types";
-import { normalizeResolveTimeline, denormalizeToResolveTimeline } from "./resolve-normalizer";
-import { resolveDiffer } from "./resolve-differ";
+import { Adapter, ValidationResult } from "../base.js";
+import { ProjectConfig, DomainFile, TimelineSnapshot, RESOLVE_DOMAINS, DomainConfig } from "../../core/types.js";
+import { normalizeResolveTimeline, denormalizeToResolveTimeline } from "./resolve-normalizer.js";
+import { resolveDiffer } from "./resolve-differ.js";
 
 export class ResolveAdapter implements Adapter {
   name = "davinci-resolve";

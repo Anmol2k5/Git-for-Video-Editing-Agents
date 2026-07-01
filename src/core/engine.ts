@@ -27,6 +27,9 @@ export class EditVCSEngine {
   constructor(projectRoot: string) {
     this.projectRoot = projectRoot;
     this.configDir = join(projectRoot, ".editvcs");
+    if (!existsSync(projectRoot)) {
+      mkdirSync(projectRoot, { recursive: true });
+    }
     this.git = simpleGit(projectRoot);
   }
 

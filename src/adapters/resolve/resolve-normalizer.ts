@@ -1,5 +1,5 @@
-import { ResolveTimeline, ResolveTrack, ResolveClip, ResolveMarker } from "./resolve-schema";
-import { DomainFile } from "../../core/types";
+import { ResolveTimeline, ResolveTrack, ResolveClip, ResolveMarker } from "./resolve-schema.js";
+import { DomainFile } from "../../core/types.js";
 
 /**
  * Splits a monolithic DaVinci Resolve timeline into first-class domain files.
