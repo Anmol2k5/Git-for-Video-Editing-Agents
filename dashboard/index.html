@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>EditVCS — Pull requests for AI video edits</title>
+  <meta name="description" content="Version control for DaVinci Resolve — review agent edit proposals before they land on your timeline.">
+  <link rel="stylesheet" href="index.css">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>✦</text></svg>">
+</head>
+<body>
+  <div class="app" id="app">
+
+    <!-- ═══ Sidebar ═══ -->
+    <aside class="sidebar" id="sidebar">
+      <div class="sidebar-brand">
+        <div class="sidebar-brand-icon">✦</div>
+        <div>
+          <div class="sidebar-brand-text">EditVCS</div>
+        </div>
+        <span class="sidebar-brand-version">v0.2</span>
+      </div>
+
+      <div class="sidebar-section-title">Navigation</div>
+      <nav class="sidebar-nav">
+        <div class="sidebar-link active" data-view="overview" id="nav-overview">
+          <span class="sidebar-link-icon">📊</span>
+          <span class="sidebar-link-text">Overview</span>
+        </div>
+        <div class="sidebar-link" data-view="timeline" id="nav-timeline">
+          <span class="sidebar-link-icon">📜</span>
+          <span class="sidebar-link-text">Timeline</span>
+        </div>
+        <div class="sidebar-link" data-view="diff" id="nav-diff">
+          <span class="sidebar-link-icon">🔀</span>
+          <span class="sidebar-link-text">What Changed</span>
+        </div>
+        <div class="sidebar-link" data-view="branches" id="nav-branches">
+          <span class="sidebar-link-icon">🌿</span>
+          <span class="sidebar-link-text">Edit Paths</span>
+          <span class="sidebar-link-badge" id="badge-paths">0</span>
+        </div>
+        <div class="sidebar-link" data-view="agents" id="nav-agents">
+          <span class="sidebar-link-icon">🤖</span>
+          <span class="sidebar-link-text">Agent Activity</span>
+        </div>
+      </nav>
+
+      <div class="sidebar-section-title">Timeline Domains</div>
+      <nav class="sidebar-nav" id="domain-nav">
+        <div class="sidebar-link" data-domain="cuts">
+          <span class="sidebar-link-icon">✂️</span>
+          <span class="sidebar-link-text">Cuts</span>
+        </div>
+        <div class="sidebar-link" data-domain="audio">
+          <span class="sidebar-link-icon">🔊</span>
+          <span class="sidebar-link-text">Audio</span>
+        </div>
+        <div class="sidebar-link" data-domain="effects">
+          <span class="sidebar-link-icon">✨</span>
+          <span class="sidebar-link-text">Effects</span>
+        </div>
+        <div class="sidebar-link" data-domain="captions">
+          <span class="sidebar-link-icon">📝</span>
+          <span class="sidebar-link-text">Captions</span>
+        </div>
+        <div class="sidebar-link" data-domain="color">
+          <span class="sidebar-link-icon">🎨</span>
+          <span class="sidebar-link-text">Color</span>
+        </div>
+        <div class="sidebar-link" data-domain="markers">
+          <span class="sidebar-link-icon">📌</span>
+          <span class="sidebar-link-text">Markers</span>
+        </div>
+      </nav>
+
+      <div class="sidebar-footer">
+        <div class="sidebar-project-info">
+          <div class="sidebar-project-name" id="project-name">🎬 Loading...</div>
+          <div class="sidebar-project-meta">
+            <span class="sidebar-project-branch" id="project-branch">🌿 main</span>
+          </div>
+        </div>
+      </div>
+    </aside>
+
+    <!-- ═══ Main Content ═══ -->
+    <div class="main-wrapper">
+
+      <!-- Header -->
+      <header class="header" id="header">
+        <div class="header-title">
+          <span class="header-title-icon" id="header-icon">📊</span>
+          <span id="header-text">Project Overview</span>
+        </div>
+        <div class="header-actions">
+          <button class="btn btn-ghost btn-sm" id="btn-refresh" title="Refresh">🔄 Refresh</button>
+        </div>
+      </header>
+
+      <!-- Content -->
+      <main class="content" id="content">
+
+        <!-- ═══ Overview View ═══ -->
+        <div class="view active" id="view-overview">
+
+          <!-- Stats -->
+          <div class="stats-grid">
+            <div class="stat-card">
+              <div class="stat-icon">📝</div>
+              <div class="stat-value" id="stat-commits">0</div>
+              <div class="stat-label">Saved Versions</div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-icon">🌿</div>
+              <div class="stat-value" id="stat-branches">0</div>
+              <div class="stat-label">Active Edit Paths</div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-icon">📥</div>
+              <div class="stat-value" id="stat-proposals">0</div>
+              <div class="stat-label">Review Requests</div>
+            </div>
+          </div>
+
+          <!-- Pending Reviews -->
+          <div class="section-title" style="margin-top: var(--space-8)">
+            ⏳ Pending Review Requests
+          </div>
+          <div id="pending-reviews">
+            <div class="empty-state">
+              <div class="empty-state-icon">✅</div>
+              <div class="empty-state-title">All caught up!</div>
+              <div class="empty-state-text">No pending agent reviews.</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- ═══ Timeline View ═══ -->
+        <div class="view" id="view-timeline">
+          <div class="flex-between mb-6">
+            <div class="section-title" style="margin-bottom:0">Saved Versions</div>
+          </div>
+          <div class="timeline" id="timeline">
+            <!-- Populated via API -->
+          </div>
+        </div>
+
+        <!-- ═══ Diff View ═══ -->
+        <div class="view" id="view-diff">
+          <div class="section-title mb-6">Semantic Video Diff</div>
+          <div class="flex-between mb-6">
+            <div class="diff-tabs" id="diff-tabs"></div>
+          </div>
+          <div id="diff-content"></div>
+        </div>
+
+        <!-- ═══ Branches View ═══ -->
+        <div class="view" id="view-branches">
+          <div class="flex-between mb-6">
+            <div class="section-title" style="margin-bottom:0">Edit Paths</div>
+          </div>
+          <div class="branch-list" id="branch-list"></div>
+        </div>
+
+        <!-- ═══ Agent Activity View ═══ -->
+        <div class="view" id="view-agents">
+          <div class="section-title mb-6">🤖 Agent Leaderboard</div>
+          <div class="agent-leaderboard" id="agent-leaderboard">
+             <!-- Static for MVP -->
+             <div class="agent-card">
+                <div class="agent-card-header">
+                  <div class="agent-avatar">🤖</div>
+                  <div>
+                    <div class="agent-name">HookAgent</div>
+                    <div class="agent-model-name">claude-sonnet</div>
+                  </div>
+                </div>
+                <div class="agent-stats" style="margin-top: 1rem">
+                  <div class="agent-stat">
+                    <div class="agent-stat-value">87%</div>
+                    <div class="agent-stat-label">Confidence</div>
+                  </div>
+                </div>
+             </div>
+          </div>
+        </div>
+
+      </main>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

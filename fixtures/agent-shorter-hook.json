@@ -1,0 +1,142 @@
+{
+  "id": "tl_001",
+  "name": "Creator Podcast Episode 14",
+  "framerate": 24,
+  "resolution": { "width": 1920, "height": 1080 },
+  "tracks": [
+    {
+      "id": "v1",
+      "index": 1,
+      "type": "video",
+      "name": "V1 - A-Roll",
+      "clips": [
+        {
+          "id": "clip_intro_01",
+          "name": "Hook_Take3.mp4",
+          "type": "video",
+          "recordIn": 0,
+          "recordOut": 96,
+          "startFrame": 144,
+          "endFrame": 240,
+          "duration": 96
+        },
+        {
+          "id": "clip_main_01",
+          "name": "Interview_A_01.mp4",
+          "type": "video",
+          "recordIn": 96,
+          "recordOut": 3456,
+          "startFrame": 0,
+          "endFrame": 3360,
+          "duration": 3360
+        }
+      ]
+    },
+    {
+      "id": "v2",
+      "index": 2,
+      "type": "video",
+      "name": "V2 - B-Roll",
+      "clips": [
+        {
+          "id": "clip_broll_01",
+          "name": "office_broll_02.mov",
+          "type": "video",
+          "recordIn": 432,
+          "recordOut": 506,
+          "startFrame": 0,
+          "endFrame": 74,
+          "duration": 74
+        }
+      ]
+    },
+    {
+      "id": "a1",
+      "index": 1,
+      "type": "audio",
+      "name": "A1 - Dialogue",
+      "clips": [
+        {
+          "id": "audio_dialogue_01",
+          "name": "Hook_Take3.mp4",
+          "type": "audio",
+          "recordIn": 0,
+          "recordOut": 96,
+          "startFrame": 144,
+          "endFrame": 240,
+          "duration": 96,
+          "audioConfig": { "volumeDb": -1.5, "pan": 0 }
+        },
+        {
+          "id": "audio_dialogue_02",
+          "name": "Interview_A_01.mp4",
+          "type": "audio",
+          "recordIn": 96,
+          "recordOut": 3456,
+          "startFrame": 0,
+          "endFrame": 3360,
+          "duration": 3360,
+          "audioConfig": { "volumeDb": -1.5, "pan": 0 }
+        }
+      ]
+    },
+    {
+      "id": "a2",
+      "index": 2,
+      "type": "audio",
+      "name": "A2 - Music",
+      "clips": [
+        {
+          "id": "audio_music_01",
+          "name": "uplifting_01.mp3",
+          "type": "audio",
+          "recordIn": 0,
+          "recordOut": 3456,
+          "startFrame": 144,
+          "endFrame": 3600,
+          "duration": 3456,
+          "audioConfig": { "volumeDb": -18.0, "pan": 0 }
+        }
+      ]
+    },
+    {
+      "id": "st1",
+      "index": 1,
+      "type": "subtitle",
+      "name": "ST1 - Captions",
+      "clips": [
+        {
+          "id": "caption_01",
+          "name": "Text+",
+          "type": "title",
+          "recordIn": 24,
+          "recordOut": 72,
+          "startFrame": 24,
+          "endFrame": 72,
+          "duration": 48,
+          "textConfig": { "content": "This changes everything", "font": "Inter", "size": 64 }
+        },
+        {
+          "id": "caption_02",
+          "name": "Text+",
+          "type": "title",
+          "recordIn": 500,
+          "recordOut": 600,
+          "startFrame": 500,
+          "endFrame": 600,
+          "duration": 100,
+          "textConfig": { "content": "Subscribe for more", "font": "Inter", "size": 64 }
+        }
+      ]
+    }
+  ],
+  "markers": [
+    {
+      "id": "marker_01",
+      "frameId": 96,
+      "color": "Blue",
+      "name": "Interview Start",
+      "note": ""
+    }
+  ]
+}
