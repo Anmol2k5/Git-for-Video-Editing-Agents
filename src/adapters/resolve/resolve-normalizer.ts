@@ -88,8 +88,25 @@ export function normalizeResolveTimeline(exportData: LiveResolveExport): DomainF
             trackIndex: track.trackIndex,
             recordFrameStart: item.recordFrameStart,
             recordFrameEnd: item.recordFrameEnd,
-            enabled: item.enabled
+            enabled: item.enabled,
+            textConfig: {
+              content: item.properties?.text || item.name
+            }
           };
+        }
+
+        // Check for effects mapped in properties (e.g. from GetClipProperty)
+        if (item.properties) {
+           const effectName = item.properties["Fusion Effects"] || item.properties["OpenFX"];
+           if (effectName) {
+             domains.find(d => d.domain === "effects")!.data[`${item.id}_effect`] = {
+               id: `${item.id}_effect`,
+               effectType: effectName,
+               name: effectName,
+               clipId: item.id,
+               trackName: track.name
+             };
+           }
         }
 
         // Clip-level Markers (mapped globally but bound to frameId/clip)

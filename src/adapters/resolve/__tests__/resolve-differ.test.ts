@@ -70,4 +70,47 @@ describe("DaVinci Resolve Semantic Differ (Live Import)", () => {
     expect(changes[0].operation).toBe("add");
     expect(changes[0].humanReadableSummary).toBe("Added marker at 86800: 'Use alternate hook'");
   });
+
+  it("detects a caption update", () => {
+    const base = {
+      "caption_1": { id: "caption_1", name: "Subtitle", textConfig: { content: "Hello world" }, trackName: "ST1", recordFrameStart: 0, recordFrameEnd: 50 }
+    };
+    const compare = {
+      "caption_1": { id: "caption_1", name: "Subtitle", textConfig: { content: "Hello everyone" }, trackName: "ST1", recordFrameStart: 0, recordFrameEnd: 50 }
+    };
+
+    const changes = resolveDiffer("captions", base, compare);
+    
+    expect(changes.length).toBe(1);
+    expect(changes[0].operation).toBe("update");
+    expect(changes[0].humanReadableSummary).toBe("Updated caption text to 'Hello everyone'.");
+  });
+
+  it("detects an effect addition", () => {
+    const base = {};
+    const compare = {
+      "effect_1": { id: "effect_1", effectType: "Gaussian Blur", name: "Blur 1", trackName: "V1" }
+    };
+
+    const changes = resolveDiffer("effects", base, compare);
+    
+    expect(changes.length).toBe(1);
+    expect(changes[0].operation).toBe("add");
+    expect(changes[0].humanReadableSummary).toBe("Added effect 'Gaussian Blur' to V1.");
+  });
+
+  it("detects a color grade adjustment", () => {
+    const base = {
+      "grade_1": { id: "grade_1", clipName: "A-Roll.mp4", nodes: [{ type: "primary", lift: 0 }] }
+    };
+    const compare = {
+      "grade_1": { id: "grade_1", clipName: "A-Roll.mp4", nodes: [{ type: "primary", lift: 0.5 }] }
+    };
+
+    const changes = resolveDiffer("color", base, compare);
+    
+    expect(changes.length).toBe(1);
+    expect(changes[0].operation).toBe("update");
+    expect(changes[0].humanReadableSummary).toBe("Adjusted color grade for 'A-Roll.mp4'.");
+  });
 });
