@@ -128,6 +128,21 @@ def export_timeline(redact_media_paths=False):
                     if prop_color and prop_color != "None":
                          clip_data["properties"]["color"] = prop_color
 
+                    # Extract all clip properties if supported by this version of Resolve API
+                    try:
+                        all_props = item.GetClipProperty()
+                        if isinstance(all_props, dict):
+                            for k, v in all_props.items():
+                                if k not in clip_data["properties"]:
+                                    clip_data["properties"][k] = v
+                    except Exception:
+                        pass
+                        
+                    # For subtitle tracks, the 'name' often represents the text itself in Resolve
+                    if track_type == "subtitle":
+                        clip_data["properties"]["text"] = name
+
+
                     # Clip Markers
                     clip_markers = item.GetMarkers()
                     if clip_markers:

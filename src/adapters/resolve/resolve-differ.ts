@@ -114,6 +114,8 @@ function generateAddSummary(domain: string, type: EntityType, item: any, fps: nu
       return `Added marker at ${item.frameId}: '${item.note || item.name}'`;
   }
   if (type === "caption") return `Added caption: '${item.textConfig?.content || item.name}'.`;
+  if (type === "effect") return `Added effect '${item.effectType || item.name}' to ${item.trackName || "timeline"}.`;
+  if (type === "color_grade") return `Added color grade to '${item.clipName || item.name || item.id}'.`;
   return `Added ${type.replace("_", " ")} '${item.name || item.id}' to ${item.trackName || "timeline"}.`;
 }
 
@@ -121,6 +123,9 @@ function generateRemoveSummary(domain: string, type: EntityType, item: any, fps:
   if (type === "marker") {
       return `Removed marker at ${item.frameId}: '${item.note || item.name}'`;
   }
+  if (type === "caption") return `Removed caption: '${item.textConfig?.content || item.name}'.`;
+  if (type === "effect") return `Removed effect '${item.effectType || item.name}' from ${item.trackName || "timeline"}.`;
+  if (type === "color_grade") return `Removed color grade from '${item.clipName || item.name || item.id}'.`;
   return `Removed ${type.replace("_", " ")} '${item.name || item.id}' from ${item.trackName || "timeline"}.`;
 }
 
@@ -162,6 +167,23 @@ function generateUpdateSummary(domain: string, type: EntityType, oldItem: any, n
     if (oldItem.audioConfig.volumeDb !== newItem.audioConfig.volumeDb) {
       return `Changed audio gain from ${oldItem.audioConfig.volumeDb} dB to ${newItem.audioConfig.volumeDb} dB for '${newItem.name}'.`;
     }
+  }
+
+  if (type === "caption") {
+    if (oldItem.textConfig?.content !== newItem.textConfig?.content) {
+      return `Updated caption text to '${newItem.textConfig?.content || newItem.name}'.`;
+    }
+  }
+
+  if (type === "effect") {
+    if (oldItem.effectType !== newItem.effectType) {
+      return `Changed effect from '${oldItem.effectType}' to '${newItem.effectType}' for '${newItem.name || newItem.id}'.`;
+    }
+    return `Updated effect parameters for '${newItem.effectType || newItem.name || newItem.id}'.`;
+  }
+
+  if (type === "color_grade") {
+    return `Adjusted color grade for '${newItem.clipName || newItem.name || newItem.id}'.`;
   }
 
   return `Updated ${type.replace("_", " ")} properties for '${newItem.name || newItem.id}'.`;
