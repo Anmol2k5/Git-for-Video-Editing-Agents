@@ -1,0 +1,25 @@
+{
+  "projectName": "YouTube Video Final",
+  "projectPathHint": "C:/Users/Mayur/Client/YouTube Video Final.prproj",
+  "capturedAt": "2026-07-05T18:41:00.000Z",
+  "sequences": [
+    {
+      "name": "Main Edit",
+      "durationTicks": "125280000000",
+      "videoTrackCount": 3,
+      "audioTrackCount": 4,
+      "clips": [
+        {
+          "stableFingerprint": "clip_1",
+          "name": "Intro.mp4",
+          "trackType": "video",
+          "trackIndex": 1,
+          "startTicks": "0",
+          "endTicks": "25056000000",
+          "inTicks": "0",
+          "outTicks": "25056000000"
+        }
+      ]
+    }
+  ]
+}
