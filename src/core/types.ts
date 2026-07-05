@@ -67,7 +67,7 @@ export interface TimelineSnapshot {
   createdBy: Actor;
   createdAt: string;
   sourceTimelinePath?: string;
-  domains: string[];
+  domains: DomainFile[] | string[];
   previewPath?: string;
   summary: string;
 }

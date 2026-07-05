@@ -1,18 +1,28 @@
 {
   "name": "editvcs",
   "version": "0.1.0",
-  "description": "Universal version control for creative editing — for agents and humans",
+  "description": "Universal version control for creative editing — for agents and humans (Premiere Offline)",
   "main": "dist/cli/index.js",
   "bin": {
     "editvcs": "./dist/cli/index.js"
   },
   "type": "module",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
   "scripts": {
-    "build": "tsc",
-    "dev": "tsc --watch",
-    "dashboard": "npx -y serve dashboard -l 3333 --no-clipboard",
+    "build:engine": "tsc",
+    "build": "tsc && vite build",
+    "dev": "vite",
+    "preview": "vite preview",
+    "package:zxp": "node scripts/build-zxp.js",
     "start": "node dist/cli/index.js",
-    "test": "vitest run"
+    "test": "vitest run",
+    "editvcs:test": "npm run test --workspaces --if-present",
+    "editvcs:build": "npm run build --workspaces --if-present",
+    "editvcs:companion": "npm --workspace apps/companion-service run dev",
+    "editvcs:premiere": "npm --workspace apps/premiere-plugin run dev"
   },
   "dependencies": {
     "chalk": "^5.3.0",
@@ -21,15 +31,26 @@
     "diff": "^7.0.0",
     "express": "^5.2.1",
     "ora": "^8.1.0",
-    "simple-git": "^3.27.0"
+    "simple-git": "^3.27.0",
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7"
   },
   "devDependencies": {
+    "@tailwindcss/vite": "^4.3.2",
     "@types/cors": "^2.8.19",
     "@types/diff": "^6.0.0",
     "@types/express": "^5.0.6",
     "@types/node": "^22.10.0",
+    "@types/react": "^19.2.17",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^6.0.3",
+    "chokidar": "^5.0.0",
+    "lucide-react": "^1.23.0",
+    "tailwindcss": "^4.3.2",
     "typescript": "^5.7.0",
-    "vitest": "^4.1.9"
+    "vite": "^8.1.1",
+    "vitest": "^4.1.9",
+    "zxp-sign-cmd": "^2.0.0"
   },
   "keywords": [
     "version-control",
@@ -37,7 +58,8 @@
     "editing",
     "agents",
     "ai",
-    "collaboration"
+    "collaboration",
+    "premiere"
   ],
   "license": "MIT"
 }

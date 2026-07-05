@@ -1,3 +1,4 @@
+import * as crypto from "crypto";
 function framesToTimecode(frames, fps = 24) {
     const f = Math.floor(frames % fps);
     const s = Math.floor((frames / fps) % 60);
@@ -8,7 +9,7 @@ function framesToTimecode(frames, fps = 24) {
 }
 export function resolveDiffer(domain, oldData, newData) {
     const changes = [];
-    const fps = 24; // Hardcoding 24fps for this MVP diff formatting
+    const fps = 24;
     const oldKeys = new Set(Object.keys(oldData));
     const newKeys = new Set(Object.keys(newData));
     // Additions
@@ -25,8 +26,8 @@ export function resolveDiffer(domain, oldData, newData) {
                 before: null,
                 after: item,
                 humanReadableSummary: generateAddSummary(domain, type, item, fps),
-                timecodeStart: item.recordIn ? framesToTimecode(item.recordIn, fps) : undefined,
-                timecodeEnd: item.recordOut ? framesToTimecode(item.recordOut, fps) : undefined,
+                timecodeStart: item.recordFrameStart !== undefined ? framesToTimecode(item.recordFrameStart, fps) : undefined,
+                timecodeEnd: item.recordFrameEnd !== undefined ? framesToTimecode(item.recordFrameEnd, fps) : undefined,
                 affectedTrack: item.trackName
             });
         }
@@ -45,8 +46,8 @@ export function resolveDiffer(domain, oldData, newData) {
                 before: item,
                 after: null,
                 humanReadableSummary: generateRemoveSummary(domain, type, item, fps),
-                timecodeStart: item.recordIn ? framesToTimecode(item.recordIn, fps) : undefined,
-                timecodeEnd: item.recordOut ? framesToTimecode(item.recordOut, fps) : undefined,
+                timecodeStart: item.recordFrameStart !== undefined ? framesToTimecode(item.recordFrameStart, fps) : undefined,
+                timecodeEnd: item.recordFrameEnd !== undefined ? framesToTimecode(item.recordFrameEnd, fps) : undefined,
                 affectedTrack: item.trackName
             });
         }
@@ -58,14 +59,16 @@ export function resolveDiffer(domain, oldData, newData) {
             const newItem = newData[id];
             const type = getEntityType(domain, newItem);
             if (JSON.stringify(oldItem) !== JSON.stringify(newItem)) {
-                // Detect specific type of update (trim, move, replace, property change)
                 const summary = generateUpdateSummary(domain, type, oldItem, newItem, fps);
-                // Let's determine the exact operation
                 let operation = "update";
-                if (oldItem.name !== newItem.name)
-                    operation = "replace";
-                else if (oldItem.recordIn !== newItem.recordIn && oldItem.recordOut - oldItem.recordIn === newItem.recordOut - newItem.recordIn)
-                    operation = "move";
+                if (type === "clip" || type === "audio_clip") {
+                    if (oldItem.name !== newItem.name)
+                        operation = "replace";
+                    else if (oldItem.recordFrameStart !== newItem.recordFrameStart &&
+                        (oldItem.recordFrameEnd - oldItem.recordFrameStart) === (newItem.recordFrameEnd - newItem.recordFrameStart)) {
+                        operation = "move";
+                    }
+                }
                 changes.push({
                     id: crypto.randomUUID(),
                     domain,
@@ -75,8 +78,8 @@ export function resolveDiffer(domain, oldData, newData) {
                     before: oldItem,
                     after: newItem,
                     humanReadableSummary: summary,
-                    timecodeStart: newItem.recordIn ? framesToTimecode(newItem.recordIn, fps) : undefined,
-                    timecodeEnd: newItem.recordOut ? framesToTimecode(newItem.recordOut, fps) : undefined,
+                    timecodeStart: newItem.recordFrameStart !== undefined ? framesToTimecode(newItem.recordFrameStart, fps) : undefined,
+                    timecodeEnd: newItem.recordFrameEnd !== undefined ? framesToTimecode(newItem.recordFrameEnd, fps) : undefined,
                     affectedTrack: newItem.trackName
                 });
             }
@@ -100,45 +103,76 @@ function getEntityType(domain, item) {
     return "metadata";
 }
 function generateAddSummary(domain, type, item, fps) {
-    const tc = item.recordIn !== undefined ? ` at ${framesToTimecode(item.recordIn, fps)}` : "";
+    if (type === "marker") {
+        return `Added marker at ${item.frameId}: '${item.note || item.name}'`;
+    }
     if (type === "caption")
-        return `Added animated caption: '${item.textConfig?.content || item.name}'${tc}.`;
-    if (type === "audio_clip")
-        return `Added audio track '${item.name}'${tc}.`;
-    return `Added ${type.replace("_", " ")} '${item.name || item.id}'${tc}.`;
+        return `Added caption: '${item.textConfig?.content || item.name}'.`;
+    if (type === "effect")
+        return `Added effect '${item.effectType || item.name}' to ${item.trackName || "timeline"}.`;
+    if (type === "color_grade")
+        return `Added color grade to '${item.clipName || item.name || item.id}'.`;
+    return `Added ${type.replace("_", " ")} '${item.name || item.id}' to ${item.trackName || "timeline"}.`;
 }
 function generateRemoveSummary(domain, type, item, fps) {
-    const tc = item.recordIn !== undefined ? ` from ${framesToTimecode(item.recordIn, fps)}` : "";
-    return `Removed ${type.replace("_", " ")} '${item.name || item.id}'${tc}.`;
+    if (type === "marker") {
+        return `Removed marker at ${item.frameId}: '${item.note || item.name}'`;
+    }
+    if (type === "caption")
+        return `Removed caption: '${item.textConfig?.content || item.name}'.`;
+    if (type === "effect")
+        return `Removed effect '${item.effectType || item.name}' from ${item.trackName || "timeline"}.`;
+    if (type === "color_grade")
+        return `Removed color grade from '${item.clipName || item.name || item.id}'.`;
+    return `Removed ${type.replace("_", " ")} '${item.name || item.id}' from ${item.trackName || "timeline"}.`;
 }
 function generateUpdateSummary(domain, type, oldItem, newItem, fps) {
-    if (type === "clip") {
+    if (type === "marker") {
+        return `Updated marker at ${newItem.frameId}: '${newItem.note || newItem.name}'`;
+    }
+    if (type === "clip" || type === "audio_clip") {
+        // Enabled/disabled
+        if (oldItem.enabled !== newItem.enabled) {
+            return `${newItem.enabled ? 'Enabled' : 'Disabled'} '${newItem.name}'.`;
+        }
         // Replacement
         if (oldItem.name !== newItem.name) {
-            return `Replaced '${oldItem.name}' with '${newItem.name}' from ${framesToTimecode(newItem.recordIn, fps)}.`;
+            return `Replaced '${oldItem.name}' with '${newItem.name}'.`;
         }
         // Trim
-        if (oldItem.recordOut - oldItem.recordIn !== newItem.recordOut - newItem.recordIn) {
-            const oldDur = (oldItem.recordOut - oldItem.recordIn) / fps;
-            const newDur = (newItem.recordOut - newItem.recordIn) / fps;
-            const diff = Math.abs(oldDur - newDur).toFixed(1);
+        if ((oldItem.recordFrameEnd - oldItem.recordFrameStart) !== (newItem.recordFrameEnd - newItem.recordFrameStart)) {
+            const oldDur = oldItem.recordFrameEnd - oldItem.recordFrameStart;
+            const newDur = newItem.recordFrameEnd - newItem.recordFrameStart;
+            const diffFrames = Math.abs(oldDur - newDur);
             const action = newDur < oldDur ? "Trimmed" : "Extended";
-            return `${action} clip '${newItem.name}' by ${diff} seconds from ${framesToTimecode(newItem.recordIn, fps)} to ${framesToTimecode(newItem.recordOut, fps)}.`;
+            // "Trimmed Interview_A_03 by 42 frames at the end." (simplified)
+            return `${action} '${newItem.name}' by ${diffFrames} frames.`;
         }
         // Move
-        if (oldItem.recordIn !== newItem.recordIn) {
-            return `Moved '${newItem.name}' on ${newItem.trackName} to ${framesToTimecode(newItem.recordIn, fps)}.`;
+        if (oldItem.recordFrameStart !== newItem.recordFrameStart) {
+            const diffFrames = newItem.recordFrameStart - oldItem.recordFrameStart;
+            const direction = diffFrames > 0 ? "later" : "earlier";
+            return `Moved '${newItem.name}' ${Math.abs(diffFrames)} frames ${direction} on ${newItem.trackName || 'track'}.`;
         }
     }
     if (type === "audio_clip" && oldItem.audioConfig && newItem.audioConfig) {
         if (oldItem.audioConfig.volumeDb !== newItem.audioConfig.volumeDb) {
-            return `Changed dialogue audio gain from ${oldItem.audioConfig.volumeDb.toFixed(1)} dB to ${newItem.audioConfig.volumeDb.toFixed(1)} dB for clip '${newItem.name}'.`;
+            return `Changed audio gain from ${oldItem.audioConfig.volumeDb} dB to ${newItem.audioConfig.volumeDb} dB for '${newItem.name}'.`;
         }
     }
-    if (type === "color_grade") {
-        if (oldItem.preset !== newItem.preset) {
-            return `Applied ${newItem.preset} cinematic grade preset to clip.`;
+    if (type === "caption") {
+        if (oldItem.textConfig?.content !== newItem.textConfig?.content) {
+            return `Updated caption text to '${newItem.textConfig?.content || newItem.name}'.`;
         }
+    }
+    if (type === "effect") {
+        if (oldItem.effectType !== newItem.effectType) {
+            return `Changed effect from '${oldItem.effectType}' to '${newItem.effectType}' for '${newItem.name || newItem.id}'.`;
+        }
+        return `Updated effect parameters for '${newItem.effectType || newItem.name || newItem.id}'.`;
+    }
+    if (type === "color_grade") {
+        return `Adjusted color grade for '${newItem.clipName || newItem.name || newItem.id}'.`;
     }
     return `Updated ${type.replace("_", " ")} properties for '${newItem.name || newItem.id}'.`;
 }

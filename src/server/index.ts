@@ -133,7 +133,7 @@ export function startServer(repoPath: string, port: number = 3333) {
   // Fallback for SPA routing if needed
   app.get("*", (req, res) => {
     if (!req.path.startsWith('/api/')) {
-      res.sendFile(path.join(dashboardPath, "index.html"));
+      res.sendFile(path.join(dashboardDir, "index.html"));
     } else {
       res.status(404).json({ error: "Not found" });
     }

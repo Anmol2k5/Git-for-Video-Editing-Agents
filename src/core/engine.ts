@@ -344,12 +344,34 @@ export class EditVCSEngine {
   /**
    * Import a full state JSON and split into domains
    */
-  importState(state: Record<string, any>): void {
+  async importState(state: Record<string, any>): Promise<any> {
     const config = this.getConfig();
-    for (const domain of config.domains) {
-      if (state[domain.name]) {
-        this.writeDomain(domain.name, state[domain.name]);
-      }
+    // Use adapter if possible
+    const { adapterRegistry } = await import("../adapters/base.js");
+    // Also need to register Resolve and Premiere adapters
+    await import("../adapters/resolve/index.js").catch(() => {});
+    await import("../adapters/premiere/index.js").catch(() => {});
+    
+    const adapter = adapterRegistry.get(config.adapter);
+    let snapshotId = "unknown";
+    
+    if (adapter && (adapter as any).importState) {
+        const snapshot = await (adapter as any).importState(state);
+        for (const domainFile of snapshot.domains) {
+           this.writeDomain(domainFile.domain, domainFile.data);
+        }
+        return snapshot;
+    } else {
+        // Fallback
+        for (const domain of config.domains) {
+          if (state[domain.name]) {
+            this.writeDomain(domain.name, state[domain.name]);
+          }
+        }
+        return {
+           id: "fallback",
+           domains: config.domains.map(d => ({ domain: d.name, data: state[d.name] }))
+        };
     }
   }
 

@@ -1,12 +1,13 @@
-import { ResolveTimeline } from "./resolve-schema.js";
+import { LiveResolveExport } from "./resolve-schema.js";
 import { DomainFile } from "../../core/types.js";
 /**
- * Splits a monolithic DaVinci Resolve timeline into first-class domain files.
+ * Splits a monolithic live DaVinci Resolve JSON export into first-class domain files.
  */
-export declare function normalizeResolveTimeline(timeline: ResolveTimeline): DomainFile[];
+export declare function normalizeResolveTimeline(exportData: LiveResolveExport): DomainFile[];
 /**
- * Reassembles domain files back into a single Resolve timeline JSON.
- * (In a real implementation, this might push directly to the Resolve API instead of generating JSON)
+ * For Phase 1 (Read-Only), denormalization is not fully implemented for write-back.
+ * This function exists for mock compatibility but will not generate a full live JSON
+ * capable of round-tripping into Resolve until Phase 2.
  */
-export declare function denormalizeToResolveTimeline(domainFiles: DomainFile[]): ResolveTimeline;
+export declare function denormalizeToResolveTimeline(domains: DomainFile[]): any;
 //# sourceMappingURL=resolve-normalizer.d.ts.map

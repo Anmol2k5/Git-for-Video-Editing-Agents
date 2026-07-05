@@ -1,0 +1,28 @@
+{
+  "name": "@editvcs/premiere-plugin",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@editvcs/shared-types": "*",
+    "@editvcs/host-adapters": "*",
+    "react": "*",
+    "react-dom": "*",
+    "lucide-react": "*"
+  },
+  "devDependencies": {
+    "@testing-library/react": "^15.0.0",
+    "@testing-library/user-event": "^14.5.2",
+    "@testing-library/jest-dom": "^6.4.5",
+    "@vitejs/plugin-react": "*",
+    "jsdom": "^24.0.0",
+    "typescript": "*",
+    "vite": "*",
+    "vitest": "*"
+  }
+}

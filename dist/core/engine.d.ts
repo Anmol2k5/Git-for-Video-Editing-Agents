@@ -69,7 +69,7 @@ export declare class EditVCSEngine {
     /**
      * Import a full state JSON and split into domains
      */
-    importState(state: Record<string, any>): void;
+    importState(state: Record<string, any>): Promise<any>;
     /**
      * Export all domains as a single state object
      */
