@@ -19,7 +19,9 @@
     "package:zxp": "node scripts/build-zxp.js",
     "start": "node dist/cli/index.js",
     "test": "vitest run",
+    "lint": "npm run lint --workspaces --if-present",
     "editvcs:test": "npm run test --workspaces --if-present",
+    "editvcs:lint": "npm run lint --workspaces --if-present",
     "editvcs:build": "npm run build --workspaces --if-present",
     "editvcs:companion": "npm --workspace apps/companion-service run dev",
     "editvcs:premiere": "npm --workspace apps/premiere-plugin run dev"

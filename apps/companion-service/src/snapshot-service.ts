@@ -63,6 +63,24 @@ export function createSnapshotService(options: { storageRoot: string }) {
       await repo.saveSnapshot(snapshot);
 
       return { created: true, snapshot };
+    },
+
+    async listSnapshots(projectId?: string): Promise<Snapshot[]> {
+      await repo.init();
+      const manifestsDir = path.join(options.storageRoot, "manifests");
+      const files = await fs.readdir(manifestsDir);
+      const snapshots = await Promise.all(
+        files
+          .filter((file) => file.endsWith(".json"))
+          .map(async (file) => {
+            const content = await fs.readFile(path.join(manifestsDir, file), "utf8");
+            return JSON.parse(content) as Snapshot;
+          })
+      );
+
+      return snapshots
+        .filter((snapshot) => !projectId || snapshot.projectId === projectId)
+        .sort((left, right) => right.createdAt.localeCompare(left.createdAt));
     }
   };
 }
