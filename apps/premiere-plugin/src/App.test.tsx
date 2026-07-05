@@ -23,4 +23,29 @@ describe("Premiere panel", () => {
     await user.click(await screen.findByRole("button", { name: "Create Save Point" }));
     expect(screen.getByLabelText("Save point name")).toBeInTheDocument();
   });
+
+  it("shows history, changes, restore-as-copy, streams, and cloud backup states", async () => {
+    render(<App host={createMockPanelHost({ tracked: true })} />);
+
+    expect(await screen.findByText("Latest saved version")).toBeInTheDocument();
+    expect(screen.getByText("Before client review")).toBeInTheDocument();
+    expect(screen.getByText("Changes")).toBeInTheDocument();
+    expect(screen.getByText("Added 1 clip to Sequence: Main Edit")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Restore as Copy" })).toBeInTheDocument();
+    expect(screen.getByLabelText("Version stream")).toBeInTheDocument();
+    expect(screen.getByText("Cloud: Not connected")).toBeInTheDocument();
+  });
+
+  it("renders honest unavailable states for companion and host limitations", async () => {
+    render(<App host={createMockPanelHost({
+      tracked: true,
+      companionConnected: false,
+      capabilities: { projectPath: false, trackClipRead: false }
+    })} />);
+
+    expect(await screen.findByText("Companion service not running")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument();
+    expect(screen.getByText("Project file location is unavailable in this Premiere version.")).toBeInTheDocument();
+    expect(screen.getByText("Could not inspect clip-level changes in this Premiere version")).toBeInTheDocument();
+  });
 });
