@@ -34,3 +34,7 @@ npm run editvcs:companion
 npm run editvcs:premiere
 npm run editvcs:test
 ```
+
+## Contributing
+
+Contributions are welcome! Please read the contributing guidelines before submitting a pull request.
