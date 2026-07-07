@@ -38,3 +38,8 @@ npm run editvcs:test
 ## Contributing
 
 Contributions are welcome! Please read the contributing guidelines before submitting a pull request.
+
+## License
+
+This project is licensed under the MIT License.
+
