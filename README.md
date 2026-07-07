@@ -21,6 +21,10 @@ EditVCS gives video editors GitHub-style version history without asking them to 
 - Node.js 18 or higher
 - Adobe Premiere Pro 2023 or newer
 
+## Architecture Overview
+
+EditVCS uses a local node-based companion service to handle git-like snapshots, while a Premiere UXP panel acts as the frontend interface for the editor.
+
 ## Setup
 
 ```bash
