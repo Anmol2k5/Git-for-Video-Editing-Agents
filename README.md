@@ -16,6 +16,10 @@ EditVCS gives video editors GitHub-style version history without asking them to 
 - It does not overwrite your active project during restore.
 - It does not automatically merge Premiere or After Effects project files.
 - It does not claim clip-level changes when Premiere does not expose enough data.
+## Requirements
+
+- Node.js 18 or higher
+- Adobe Premiere Pro 2023 or newer
 
 ## Setup
 
