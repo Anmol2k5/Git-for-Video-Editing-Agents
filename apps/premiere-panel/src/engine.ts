@@ -77,7 +77,7 @@ export class LocalEngine {
     });
   }
 
-  public async createSnapshot(projectPath: string, type: "auto" | "manual" = "auto"): Promise<ProjectVersion | null> {
+  public async createSnapshot(projectPath: string, type: "auto" | "manual" = "auto", note?: string): Promise<ProjectVersion | null> {
     const fs = getFs();
     const path = getPath();
     if (!fs || !fs.existsSync(projectPath)) return null;
@@ -104,7 +104,8 @@ export class LocalEngine {
       filename: snapshotFilename,
       contentHash: hash,
       createdAt: new Date().toISOString(),
-      checkpointType: type
+      checkpointType: type,
+      note
     };
 
     this.saveVersionRecord(projectPath, version);
