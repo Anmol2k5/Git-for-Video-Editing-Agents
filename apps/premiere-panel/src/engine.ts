@@ -40,8 +40,12 @@ type RawSnapshot = {
 };
 
 export class CompanionClient {
-  private baseUrl = `http://127.0.0.1:${COMPANION_PORT}`;
+  private baseUrl: string;
   private token: string | null = null;
+
+  constructor(port: number = COMPANION_PORT) {
+    this.baseUrl = `http://127.0.0.1:${port}`;
+  }
 
   private async ensureToken(): Promise<boolean> {
     if (this.token) return true;
@@ -119,14 +123,14 @@ export class CompanionClient {
     type: "auto" | "manual" = "auto",
     note?: string
   ): Promise<boolean> {
-    const res = await this.request("/snapshots/manual", {
+    const res = await this.request<{ created: boolean }>("/snapshots/manual", {
       method: "POST",
       body: JSON.stringify({
         projectPath,
         label: note || (type === "manual" ? "Manual save point" : "Automatic save point")
       })
     });
-    return res !== null;
+    return res?.created === true;
   }
 
   /** Restore as a new copy beside the active project. Never overwrites it. */

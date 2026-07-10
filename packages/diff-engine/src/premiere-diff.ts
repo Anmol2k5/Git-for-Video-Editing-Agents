@@ -37,13 +37,15 @@ export function comparePremiereManifests(before: PremiereProjectManifest, after:
         vidGroup.items.push(`Added clip: ${newClip.name}`);
       } else {
         if (oldClip.inTicks !== newClip.inTicks || oldClip.outTicks !== newClip.outTicks) {
-          vidGroup.items.push(`Trimmed clip: ${newClip.name}`);
+          const msg = `Trimmed clip: ${newClip.name}`;
+          vidGroup.items.push(msg);
+          result.summary.push(msg);
         }
       }
     }
     
     if (addedClips > 0) {
-      result.summary.push(`Added ${addedClips} clip to Sequence: ${newSeq.name}`);
+      result.summary.push(`Added ${addedClips} ${addedClips === 1 ? "clip" : "clips"} to Sequence: ${newSeq.name}`);
     }
   }
 
