@@ -171,12 +171,20 @@ export async function syncToGitHub(
       // Nothing to commit — that's fine
     }
 
-    // 4. Pull with rebase (to get teammate's snapshots)
+    // 4. Fetch remote history WITHOUT merging. EditVCS never auto-merges
+    //    project files; divergent history is reported for manual resolution.
     try {
-      await git("pull", "--rebase", "origin", "main");
-      pulled = 1;
+      await git("fetch", "origin", "main");
+      const behind = await git("rev-list", "--count", "HEAD..origin/main").catch(() => "0");
+      if (Number(behind) > 0) {
+        errors.push(
+          "Remote has changes EditVCS did not create. EditVCS does not auto-merge; " +
+          "pull manually or use a fresh repository."
+        );
+        return { pushed, pulled, errors };
+      }
     } catch {
-      // First push or no remote history yet — fine
+      // No remote branch yet — first push is fine
     }
 
     // 5. Push

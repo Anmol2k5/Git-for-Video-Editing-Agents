@@ -1,149 +1,179 @@
+// Panel-side client for the EditVCS companion service.
+//
+// All filesystem work (hashing, storage, restore-as-copy, sync) happens in the
+// companion service over a localhost HTTP API. The panel never touches the
+// active project file directly, so restore can never overwrite it.
+
+// The companion binds to 127.0.0.1 on this port. Keep in sync with
+// apps/companion-service/src/server-start.ts.
+const COMPANION_PORT = 8731;
+
 export type ProjectVersion = {
   id: string;
-  projectId: string; // The path of the .prproj
+  projectId: string;
   versionNumber: number;
   filename: string;
   contentHash: string;
   createdAt: string;
   checkpointType: "auto" | "manual";
   note?: string;
+  objectPath?: string;
 };
 
-// Use window.require to bypass Vite's bundler complaining about Node modules
-const getFs = () => (window as any).require ? (window as any).require('fs') : null;
-const getPath = () => (window as any).require ? (window as any).require('path') : null;
-const getCrypto = () => (window as any).require ? (window as any).require('crypto') : null;
-const getOs = () => (window as any).require ? (window as any).require('os') : null;
-const getChokidar = () => (window as any).require ? (window as any).require('chokidar') : null;
+export type SyncTargetInput = {
+  type: "local" | "github";
+  path?: string;
+  remoteUrl?: string;
+};
 
-export class LocalEngine {
-  private backupDir: string;
-  private dbPath: string;
-  private watcher: any = null;
-  private debounceTimer: any = null;
-  private currentPath: string = "";
+type RawSnapshot = {
+  id: string;
+  projectId: string;
+  createdAt: string;
+  trigger: string;
+  label?: string;
+  projectFile: {
+    originalFileName: string;
+    sha256: string;
+    objectPath: string;
+  };
+};
 
-  constructor() {
-    const os = getOs();
-    const path = getPath();
-    const fs = getFs();
-    if (!os) {
-      this.backupDir = "";
-      this.dbPath = "";
-      return;
-    }
+export class CompanionClient {
+  private baseUrl = `http://127.0.0.1:${COMPANION_PORT}`;
+  private token: string | null = null;
 
-    this.backupDir = path.join(os.homedir(), '.editvcs', 'backups');
-    this.dbPath = path.join(this.backupDir, 'local_db.json');
-
-    if (!fs.existsSync(this.backupDir)) {
-      fs.mkdirSync(this.backupDir, { recursive: true });
-    }
-    if (!fs.existsSync(this.dbPath)) {
-      fs.writeFileSync(this.dbPath, JSON.stringify({ versions: {} }), 'utf-8');
-    }
-  }
-
-  public getVersions(projectPath: string): ProjectVersion[] {
-    const fs = getFs();
-    if (!fs) return [];
+  private async ensureToken(): Promise<boolean> {
+    if (this.token) return true;
     try {
-      const data = JSON.parse(fs.readFileSync(this.dbPath, 'utf-8'));
-      return data.versions[projectPath] || [];
+      const res = await fetch(`${this.baseUrl}/pair`, { method: "POST" });
+      if (!res.ok) return false;
+      const body = (await res.json()) as { token: string };
+      this.token = body.token;
+      return true;
     } catch {
-      return [];
+      return false;
     }
   }
 
-  private saveVersionRecord(projectPath: string, version: ProjectVersion) {
-    const fs = getFs();
-    if (!fs) return;
-    const data = JSON.parse(fs.readFileSync(this.dbPath, 'utf-8'));
-    if (!data.versions) data.versions = {};
-    if (!data.versions[projectPath]) data.versions[projectPath] = [];
-    data.versions[projectPath].unshift(version);
-    fs.writeFileSync(this.dbPath, JSON.stringify(data, null, 2), 'utf-8');
-  }
-
-  private async hashFile(filePath: string): Promise<string> {
-    const fs = getFs();
-    const crypto = getCrypto();
-    return new Promise((resolve, reject) => {
-      const hash = crypto.createHash('sha256');
-      const stream = fs.createReadStream(filePath);
-      stream.on('error', (err: any) => reject(err));
-      stream.on('data', (chunk: any) => hash.update(chunk));
-      stream.on('end', () => resolve(hash.digest('hex')));
-    });
-  }
-
-  public async createSnapshot(projectPath: string, type: "auto" | "manual" = "auto", note?: string): Promise<ProjectVersion | null> {
-    const fs = getFs();
-    const path = getPath();
-    if (!fs || !fs.existsSync(projectPath)) return null;
-
-    const hash = await this.hashFile(projectPath);
-    const versions = this.getVersions(projectPath);
-    
-    // Don't save if hash is identical to latest
-    if (versions.length > 0 && versions[0].contentHash === hash) {
+  private async request<T>(path: string, init: RequestInit = {}): Promise<T | null> {
+    const authed = await this.ensureToken();
+    if (!authed) return null;
+    try {
+      const res = await fetch(`${this.baseUrl}${path}`, {
+        ...init,
+        headers: {
+          ...(init.headers ?? {}),
+          authorization: `Bearer ${this.token}`,
+          "content-type": "application/json"
+        }
+      });
+      if (!res.ok) return null;
+      return (await res.json()) as T;
+    } catch {
       return null;
     }
-
-    const versionId = getCrypto().randomUUID();
-    const versionNumber = versions.length + 1;
-    const snapshotFilename = `${versionNumber}_${path.basename(projectPath)}`;
-    const snapshotPath = path.join(this.backupDir, versionId + "_" + snapshotFilename);
-
-    fs.copyFileSync(projectPath, snapshotPath);
-
-    const version: ProjectVersion = {
-      id: versionId,
-      projectId: projectPath,
-      versionNumber,
-      filename: snapshotFilename,
-      contentHash: hash,
-      createdAt: new Date().toISOString(),
-      checkpointType: type,
-      note
-    };
-
-    this.saveVersionRecord(projectPath, version);
-    return version;
   }
 
-  public watchProject(projectPath: string, onUpdate: () => void) {
-    const chokidar = getChokidar();
-    const fs = getFs();
-    if (!chokidar || !fs.existsSync(projectPath)) return;
-
-    if (this.watcher) {
-      this.watcher.close();
+  /** Used by the UI to show a disconnected state. */
+  async isReachable(): Promise<boolean> {
+    try {
+      const res = await fetch(`${this.baseUrl}/health`);
+      return res.ok;
+    } catch {
+      return false;
     }
-    
-    this.currentPath = projectPath;
-    
-    // Create initial snapshot if none exists
-    if (this.getVersions(projectPath).length === 0) {
-      this.createSnapshot(projectPath, "auto").then(onUpdate);
-    }
+  }
 
-    this.watcher = chokidar.watch(projectPath, {
+  private basename(p: string): string {
+    return p.split(/[\\/]/).pop() ?? p;
+  }
+
+  private dirname(p: string): string {
+    const i = Math.max(p.lastIndexOf("/"), p.lastIndexOf("\\"));
+    return i < 0 ? "." : p.slice(0, i);
+  }
+
+  async listSnapshots(projectPath: string): Promise<ProjectVersion[]> {
+    const all = await this.request<RawSnapshot[]>("/snapshots");
+    if (!all) return [];
+    const name = this.basename(projectPath);
+    return all
+      .filter((s) => s.projectFile?.originalFileName === name)
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+      .map((s, i) => ({
+        id: s.id,
+        projectId: s.projectId,
+        versionNumber: i + 1,
+        filename: s.projectFile.originalFileName,
+        contentHash: s.projectFile.sha256,
+        createdAt: s.createdAt,
+        checkpointType: s.trigger === "automatic" ? "auto" : "manual",
+        note: s.label,
+        objectPath: s.projectFile.objectPath
+      }));
+  }
+
+  async createSnapshot(
+    projectPath: string,
+    type: "auto" | "manual" = "auto",
+    note?: string
+  ): Promise<boolean> {
+    const res = await this.request("/snapshots/manual", {
+      method: "POST",
+      body: JSON.stringify({
+        projectPath,
+        label: note || (type === "manual" ? "Manual save point" : "Automatic save point")
+      })
+    });
+    return res !== null;
+  }
+
+  /** Restore as a new copy beside the active project. Never overwrites it. */
+  async restore(version: ProjectVersion, projectPath: string): Promise<string | null> {
+    const res = await this.request<{ restoredPath: string }>("/snapshots/restore-copy", {
+      method: "POST",
+      body: JSON.stringify({
+        originalProjectPath: projectPath,
+        objectPath: version.objectPath,
+        destinationDirectory: this.dirname(projectPath),
+        label: version.note || "Save point",
+        createdAt: version.createdAt
+      })
+    });
+    return res ? res.restoredPath : null;
+  }
+
+  async sync(target: SyncTargetInput): Promise<{ pushed: number; pulled: number; errors: string[] } | null> {
+    await this.request("/sync/config", { method: "POST", body: JSON.stringify(target) });
+    return this.request<{ pushed: number; pulled: number; errors: string[] }>("/sync", {
+      method: "POST"
+    });
+  }
+
+  /** Watch the project file and create automatic save points via the companion. */
+  watchProject(projectPath: string, onUpdate: () => void): { close: () => void } | null {
+    const requireFn = (window as any).require;
+    const chokidar = requireFn ? requireFn("chokidar") : null;
+    const fs = requireFn ? requireFn("fs") : null;
+    if (!chokidar || !fs || !fs.existsSync(projectPath)) return null;
+
+    const watcher = chokidar.watch(projectPath, {
       persistent: true,
-      awaitWriteFinish: {
-        stabilityThreshold: 2000,
-        pollInterval: 100
-      }
+      awaitWriteFinish: { stabilityThreshold: 2000, pollInterval: 100 }
     });
 
-    this.watcher.on('change', () => {
-      if (this.debounceTimer) clearTimeout(this.debounceTimer);
-      this.debounceTimer = setTimeout(async () => {
-        const newVer = await this.createSnapshot(projectPath, "auto");
-        if (newVer) onUpdate();
+    let timer: any = null;
+    watcher.on("change", () => {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(async () => {
+        await this.createSnapshot(projectPath, "auto");
+        onUpdate();
       }, 1000);
     });
+
+    return { close: () => watcher.close() };
   }
 }
 
-export const localEngine = new LocalEngine();
+export const companionClient = new CompanionClient();

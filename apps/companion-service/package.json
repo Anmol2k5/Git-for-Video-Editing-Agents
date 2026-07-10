@@ -8,7 +8,8 @@
     "build": "tsc -p tsconfig.json",
     "lint": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
-    "dev": "node --watch src/index.ts"
+    "dev": "tsc -p tsconfig.json && node dist/server-start.js",
+    "start": "node dist/server-start.js"
   },
   "dependencies": {
     "@editvcs/shared-types": "*",

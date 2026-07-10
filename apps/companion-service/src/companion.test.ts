@@ -114,7 +114,7 @@ describe("companion service", () => {
         body: JSON.stringify({ label: "Before client review" })
       });
 
-      const snapshots = await (await fetch(`${baseUrl}/snapshots?projectId=proj_mock`, { headers })).json() as Array<{ label?: string }>;
+      const snapshots = await (await fetch(`${baseUrl}/snapshots`, { headers })).json() as Array<{ label?: string }>;
       expect(snapshots.map((snapshot) => snapshot.label)).toContain("Before client review");
 
       const createdStream = await (await fetch(`${baseUrl}/streams`, {

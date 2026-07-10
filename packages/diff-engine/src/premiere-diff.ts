@@ -1,5 +1,5 @@
 import type { PremiereProjectManifest } from "@editvcs/shared-types";
-import type { DiffResult } from "./change-groups";
+import { ticksToTimecode, type DiffResult } from "./change-groups";
 
 export function comparePremiereManifests(before: PremiereProjectManifest, after: PremiereProjectManifest): DiffResult {
   const result: DiffResult = {
@@ -18,9 +18,9 @@ export function comparePremiereManifests(before: PremiereProjectManifest, after:
       continue;
     }
 
-    if (oldSeq.durationTicks !== newSeq.durationTicks) {
-      const msg = `Changed sequence duration from 08:42 to 09:17`;
-      result.summary.push(msg); // Mocked for test
+    if (oldSeq.durationTicks && newSeq.durationTicks && oldSeq.durationTicks !== newSeq.durationTicks) {
+      const msg = `Changed sequence duration from ${ticksToTimecode(oldSeq.durationTicks)} to ${ticksToTimecode(newSeq.durationTicks)}`;
+      result.summary.push(msg);
       seqGroup.items.push(msg);
     }
 

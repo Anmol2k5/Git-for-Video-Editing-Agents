@@ -1,10 +1,10 @@
 import { useEffect, useState, useCallback } from 'react';
 import {
   Settings, Save, RefreshCw, FileText, ChevronRight,
-  GitBranch, Merge, CloudUpload, Film, Music, Image,
+  GitBranch, CloudUpload,
   ArrowUpCircle, ArrowDownCircle, FolderUp, Globe
 } from 'lucide-react';
-import { localEngine, ProjectVersion } from './engine';
+import { companionClient as client, ProjectVersion } from './engine';
 
 // CSInterface global from Adobe CEP
 declare global {
@@ -17,21 +17,6 @@ declare global {
 
 type SyncTargetType = 'local' | 'github';
 type ActivityEntry = { id: number; message: string; time: string };
-
-// ─── Mock data for the "Modified Assets" section ────────────────────────────
-
-const MOCK_CHANGED_FILES = [
-  { name: 'Interview_B_Roll_002.mp4', type: 'video' as const, status: 'modified' as const },
-  { name: 'Voiceover_Final_Mix.wav', type: 'audio' as const, status: 'modified' as const },
-  { name: 'Title_Card_v3.png', type: 'image' as const, status: 'added' as const },
-  { name: 'Lower_Third_Guest.mogrt', type: 'video' as const, status: 'modified' as const },
-];
-
-const FILE_ICONS = {
-  video: Film,
-  audio: Music,
-  image: Image,
-};
 
 // ─── Accordion component ────────────────────────────────────────────────────
 
@@ -150,15 +135,15 @@ function App() {
     }, ...prev].slice(0, 50));
   }, []);
 
-  const loadProject = useCallback(() => {
+  const loadProject = useCallback(async () => {
     if (window.CSInterface) {
       const csInterface = new window.CSInterface();
-      csInterface.evalScript("$._editvcs.getActiveProjectPath()", (res: string) => {
+      csInterface.evalScript("$._editvcs.getActiveProjectPath()", async (res: string) => {
         if (res && res !== "") {
           setProjectPath(res);
-          setVersions(localEngine.getVersions(res));
-          localEngine.watchProject(res, () => {
-            setVersions(localEngine.getVersions(res));
+          setVersions(await client.listSnapshots(res));
+          client.watchProject(res, async () => {
+            setVersions(await client.listSnapshots(res));
           });
         }
       });
@@ -166,7 +151,7 @@ function App() {
       // Mock for browser testing
       const mockPath = "E:\\Projects\\Demo.prproj";
       setProjectPath(mockPath);
-      setVersions(localEngine.getVersions(mockPath));
+      setVersions(await client.listSnapshots(mockPath));
     }
   }, []);
 
@@ -193,8 +178,8 @@ function App() {
       const csInterface = new window.CSInterface();
       csInterface.evalScript("$._editvcs.saveActiveProject()", async (res: string) => {
         if (projectPath) {
-          await localEngine.createSnapshot(projectPath, "manual", saveNote);
-          setVersions(localEngine.getVersions(projectPath));
+          await client.createSnapshot(projectPath, "manual", saveNote);
+          setVersions(await client.listSnapshots(projectPath));
           setSaveNote("");
           addActivity(`Cut saved: "${saveNote || 'Untitled'}"`);
         }
@@ -214,35 +199,22 @@ function App() {
     addActivity(`Syncing to ${syncType === 'github' ? 'GitHub' : syncPath}...`);
 
     try {
-      // In CEP mode, use Node's require to call the sync module directly
-      const requireFn = (window as any).require;
-      if (requireFn) {
-        const { sync } = requireFn('@editvcs/storage');
-        const os = requireFn('os');
-        const path = requireFn('path');
-        const localRoot = path.join(os.homedir(), '.editvcs', 'backups');
+      const target = syncType === 'github'
+        ? { type: 'github' as const, remoteUrl: syncPath }
+        : { type: 'local' as const, path: syncPath };
 
-        const target = syncType === 'github'
-          ? { type: 'github' as const, remoteUrl: syncPath }
-          : { type: 'local' as const, path: syncPath };
+      const result = await client.sync(target);
 
-        const result = await sync(localRoot, target);
-
-        if (result.errors.length > 0) {
-          addActivity(`Sync completed with errors: ${result.errors[0]}`);
-        } else {
-          addActivity(
-            syncType === 'github'
-              ? `Pushed to GitHub. ${result.pushed} pushed, ${result.pulled} pulled.`
-              : `Synced with NAS. ${result.pushed} pushed, ${result.pulled} pulled.`
-          );
-        }
+      if (!result) {
+        addActivity(`Sync failed: companion service not reachable.`);
+      } else if (result.errors.length > 0) {
+        addActivity(`Sync completed with errors: ${result.errors[0]}`);
       } else {
-        // Browser testing fallback — simulate
-        await new Promise(r => setTimeout(r, 1500));
-        addActivity(syncType === 'github'
-          ? 'Pushed to GitHub successfully.'
-          : `Synced with ${syncPath}`);
+        addActivity(
+          syncType === 'github'
+            ? `Pushed to GitHub. ${result.pushed} pushed, ${result.pulled} pulled.`
+            : `Synced with NAS. ${result.pushed} pushed, ${result.pulled} pulled.`
+        );
       }
     } catch (err) {
       addActivity(`Sync failed: ${err instanceof Error ? err.message : String(err)}`);
@@ -253,33 +225,26 @@ function App() {
 
   // ── Restore handler ─────────────────────────────────────────────────────
 
-  const handleRestore = (version: ProjectVersion) => {
-    if (!window.CSInterface || !projectPath) return;
-
-    const fs = (window as any).require('fs');
-    const path = (window as any).require('path');
-    const os = (window as any).require('os');
-    const backupDir = path.join(os.homedir(), '.editvcs', 'backups');
-
-    // Find the backup file for this version
-    const snapshotFile = `${version.id}_${version.filename}`;
-    const snapshotPath = path.join(backupDir, snapshotFile);
-
-    if (!fs.existsSync(snapshotPath)) {
-      addActivity(`Restore failed: snapshot file not found.`);
-      return;
-    }
-
-    // Copy snapshot back to the project path
+  const handleRestore = async (version: ProjectVersion) => {
+    if (!projectPath) return;
+    setIsSyncing(true);
     try {
-      fs.copyFileSync(snapshotPath, projectPath);
-      addActivity(`Restored to v${version.versionNumber}${version.note ? ` — "${version.note}"` : ''}`);
+      const restoredPath = await client.restore(version, projectPath);
+      if (!restoredPath) {
+        addActivity(`Restore failed: companion service not reachable.`);
+        return;
+      }
+      addActivity(`Restore copy created: ${restoredPath.split(/[\\/]/).pop()}`);
 
-      // Tell Premiere to reopen the project
-      const csInterface = new window.CSInterface();
-      csInterface.evalScript(`$._editvcs.reopenProject("${projectPath.replace(/\\/g, '\\\\')}")`);
+      // Reopen the new copy in Premiere — the active project is never overwritten.
+      if (window.CSInterface) {
+        const csInterface = new window.CSInterface();
+        csInterface.evalScript(`$._editvcs.reopenProject("${restoredPath.replace(/\\/g, '\\\\')}")`);
+      }
     } catch (err) {
       addActivity(`Restore failed: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setIsSyncing(false);
     }
   };
 
@@ -315,7 +280,7 @@ function App() {
             Version:
           </span>
           <span className="text-[10px] font-bold uppercase tracking-wider" style={{ color: 'var(--color-accent)' }}>
-            main ▸
+            Local
           </span>
         </div>
       </div>
@@ -356,9 +321,6 @@ function App() {
                 </button>
                 <button className="btn btn-ghost text-xs">
                   <ArrowDownCircle size={12} /> Switch
-                </button>
-                <button className="btn btn-ghost text-xs">
-                  <Merge size={12} /> Combine
                 </button>
                 <button
                   className={`btn text-xs ${syncPath ? 'btn-ghost' : 'btn-primary'}`}
@@ -409,27 +371,10 @@ function App() {
                   {isSyncing ? 'Saving...' : 'Save Cut'}
                 </button>
 
-                {/* Mock file list */}
-                <div className="mt-1 space-y-1">
-                  {MOCK_CHANGED_FILES.map((file) => {
-                    const Icon = FILE_ICONS[file.type];
-                    return (
-                      <div
-                        key={file.name}
-                        className="flex items-center gap-2 px-2 py-1.5 rounded-md text-xs"
-                        style={{ background: 'var(--color-bg-surface)' }}
-                      >
-                        <Icon size={12} style={{ color: 'var(--color-text-muted)' }} />
-                        <span className="truncate flex-1" style={{ color: 'var(--color-text-secondary)' }}>
-                          {file.name}
-                        </span>
-                        <span className={`file-badge ${file.status}`}>
-                          {file.status === 'modified' ? 'M' : 'A'}
-                        </span>
-                      </div>
-                    );
-                  })}
-                </div>
+                {/* Editor-friendly change details appear in the Compare view */}
+                <p className="text-[11px] mt-1" style={{ color: 'var(--color-text-muted)' }}>
+                  Detailed asset changes appear in the Compare view once manifests expose them.
+                </p>
               </div>
             </Accordion>
 
