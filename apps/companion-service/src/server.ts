@@ -5,6 +5,7 @@ import { createAuthenticator } from "./auth";
 import { createSnapshotService } from "./snapshot-service";
 import { createRestoreCopy } from "./restore-copy";
 import { createStreamsService } from "./streams-service";
+import { sync, type SyncTarget, type SyncResult } from "@editvcs/storage";
 
 export function createServer(options: {
   port: number;
@@ -13,10 +14,12 @@ export function createServer(options: {
 }) {
   const app = express();
   const localToken = randomBytes(32).toString("hex");
-  const snapshotService = createSnapshotService({
-    storageRoot: options.storageRoot ?? ".editvcs"
-  });
+  const storageRoot = options.storageRoot ?? ".editvcs";
+  const snapshotService = createSnapshotService({ storageRoot });
   const streamsService = createStreamsService();
+
+  // Mutable sync configuration — set by the panel UI
+  let syncTarget: SyncTarget | null = null;
 
   app.use(cors());
   app.use(express.json());
@@ -82,6 +85,42 @@ export function createServer(options: {
   app.post("/streams", async (req, res) => res.json(await streamsService.createStream(req.body)));
   app.get("/streams", async (req, res) => res.json(await streamsService.getStreams(String(req.query.projectId ?? ""))));
   app.post("/streams/switch", async (req, res) => res.json(await streamsService.switchStream(req.body.streamId)));
+
+  // ── Sync endpoints ──────────────────────────────────────────────────────
+
+  /** GET the current sync configuration */
+  app.get("/sync/config", (req, res) => {
+    res.json({ target: syncTarget });
+  });
+
+  /** POST to set or update the sync target */
+  app.post("/sync/config", (req, res) => {
+    const { type } = req.body;
+
+    if (type === "local") {
+      syncTarget = { type: "local", path: req.body.path };
+    } else if (type === "github") {
+      syncTarget = { type: "github", remoteUrl: req.body.remoteUrl };
+    } else {
+      return res.status(400).json({ error: "Invalid sync target type. Use 'local' or 'github'." });
+    }
+
+    res.json({ ok: true, target: syncTarget });
+  });
+
+  /** POST to trigger a sync operation using the stored target */
+  app.post("/sync", async (req, res, next) => {
+    try {
+      if (!syncTarget) {
+        return res.status(400).json({ error: "No sync target configured. POST /sync/config first." });
+      }
+
+      const result: SyncResult = await sync(storageRoot, syncTarget);
+      res.json(result);
+    } catch (error) {
+      next(error);
+    }
+  });
 
   app.use((error: unknown, req: express.Request, res: express.Response, next: express.NextFunction) => {
     if (res.headersSent) {
