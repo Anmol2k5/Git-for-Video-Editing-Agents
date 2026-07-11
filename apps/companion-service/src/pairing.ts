@@ -34,7 +34,7 @@ export const pairingService = {
     return { pairingId, expiresAt, code };
   },
   
-  completePairing(pairingId: string, code: string): { sessionToken: string; expiresAt: number } {
+  completePairing(pairingId: string, code: string): { token: string; expiresAt: number } {
     const record = pairings.get(pairingId);
     if (!record) {
       throw new Error("Pairing session not found or expired.");
