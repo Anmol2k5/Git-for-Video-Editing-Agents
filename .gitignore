@@ -2,4 +2,9 @@ node_modules/
 dist/
 .DS_Store
 .env
+.env.*
 .editvcs/
+*.p12
+*.zxp
+*.pem
+*.key

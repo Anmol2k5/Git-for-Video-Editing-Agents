@@ -1,26 +1,257 @@
 @import "tailwindcss";
 
 @theme {
-  --color-bg-base: #0a0a0f;
-  --color-bg-surface: #111118;
-  --color-bg-elevated: #1a1a24;
-  --color-text-primary: #f0f0f5;
-  --color-text-secondary: #9898a8;
-  --color-accent-purple: #818cf8;
-  --color-accent-cyan: #22d3ee;
+  --color-bg-base: #0d0d12;
+  --color-bg-surface: #14141b;
+  --color-bg-elevated: #1c1c26;
+  --color-bg-hover: #22222e;
+  --color-text-primary: #eaeaf0;
+  --color-text-secondary: #8888a0;
+  --color-text-muted: #55556a;
+  --color-accent: #a78bfa;
+  --color-accent-dim: rgba(167, 139, 250, 0.15);
+  --color-accent-glow: rgba(167, 139, 250, 0.25);
+  --color-border: rgba(255, 255, 255, 0.06);
+  --color-border-hover: rgba(255, 255, 255, 0.12);
+  --color-success: #34d399;
+  --color-warning: #fbbf24;
+  --color-danger: #f87171;
+}
+
+/* ── Base ─────────────────────────────────────────────────────────────────── */
+
+@font-face {
+  font-family: "Inter";
+  src: local("Inter");
 }
 
 body {
   background-color: var(--color-bg-base);
   color: var(--color-text-primary);
-  font-family: Inter, system-ui, sans-serif;
+  font-family: "Inter", system-ui, -apple-system, sans-serif;
+  font-size: 13px;
+  line-height: 1.5;
   -webkit-font-smoothing: antialiased;
-  overflow: hidden; /* App takes over scrolling */
+  -moz-osx-font-smoothing: grayscale;
+  overflow: hidden;
 }
 
-/* Glassmorphism utilities */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255,255,255,0.08) transparent;
+}
+
+*::-webkit-scrollbar {
+  width: 4px;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+*::-webkit-scrollbar-thumb {
+  background: rgba(255,255,255,0.08);
+  border-radius: 4px;
+}
+
+/* ── Glass card ───────────────────────────────────────────────────────────── */
+
 .glass {
-  background: rgba(255, 255, 255, 0.03);
-  backdrop-filter: blur(10px);
-  border: 1px solid rgba(255, 255, 255, 0.06);
+  background: rgba(255, 255, 255, 0.025);
+  backdrop-filter: blur(12px);
+  border: 1px solid var(--color-border);
+  transition: border-color 0.2s ease, background 0.2s ease;
+}
+.glass:hover {
+  border-color: var(--color-border-hover);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+/* ── Accordion section ────────────────────────────────────────────────────── */
+
+.accordion-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 0;
+  cursor: pointer;
+  user-select: none;
+  color: var(--color-text-muted);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  transition: color 0.15s ease;
+}
+.accordion-header:hover {
+  color: var(--color-text-secondary);
+}
+.accordion-chevron {
+  transition: transform 0.2s ease;
+  font-size: 8px;
+}
+.accordion-chevron.open {
+  transform: rotate(90deg);
+}
+
+/* ── Buttons ──────────────────────────────────────────────────────────────── */
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  border: none;
+  outline: none;
+}
+.btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.btn-primary {
+  background: var(--color-accent);
+  color: #0d0d12;
+  box-shadow: 0 0 16px var(--color-accent-glow);
+}
+.btn-primary:hover:not(:disabled) {
+  filter: brightness(1.1);
+  box-shadow: 0 0 24px var(--color-accent-glow);
+}
+
+.btn-ghost {
+  background: transparent;
+  color: var(--color-text-secondary);
+  border: 1px solid var(--color-border);
+}
+.btn-ghost:hover:not(:disabled) {
+  background: var(--color-bg-hover);
+  color: var(--color-text-primary);
+  border-color: var(--color-border-hover);
+}
+
+.btn-icon {
+  padding: 6px;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--color-text-muted);
+  border: none;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.btn-icon:hover {
+  background: var(--color-bg-hover);
+  color: var(--color-text-primary);
+}
+
+/* ── Inputs ───────────────────────────────────────────────────────────────── */
+
+.input {
+  width: 100%;
+  background: var(--color-bg-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  padding: 8px 12px;
+  font-size: 12px;
+  color: var(--color-text-primary);
+  outline: none;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+.input::placeholder {
+  color: var(--color-text-muted);
+}
+.input:focus {
+  border-color: var(--color-accent);
+  box-shadow: 0 0 0 2px var(--color-accent-dim);
+}
+
+/* ── Timeline ─────────────────────────────────────────────────────────────── */
+
+.timeline-node {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  border: 2px solid var(--color-text-muted);
+  background: var(--color-bg-base);
+  flex-shrink: 0;
+  transition: all 0.2s ease;
+}
+.timeline-node.active {
+  border-color: var(--color-accent);
+  background: var(--color-accent-dim);
+  box-shadow: 0 0 8px var(--color-accent-glow);
+}
+.timeline-line {
+  width: 2px;
+  flex: 1;
+  background: var(--color-border);
+  margin: 2px 0;
+  min-height: 16px;
+  transition: background 0.2s ease;
+}
+
+/* ── File change badge ────────────────────────────────────────────────────── */
+
+.file-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.file-badge.modified {
+  background: rgba(251, 191, 36, 0.12);
+  color: #fbbf24;
+}
+.file-badge.added {
+  background: rgba(52, 211, 153, 0.12);
+  color: #34d399;
+}
+
+/* ── Subtle animations ────────────────────────────────────────────────────── */
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.fade-in {
+  animation: fadeIn 0.25s ease forwards;
+}
+
+@keyframes pulse-glow {
+  0%, 100% { box-shadow: 0 0 8px var(--color-accent-glow); }
+  50% { box-shadow: 0 0 16px var(--color-accent-glow); }
+}
+.pulse-glow {
+  animation: pulse-glow 2s ease-in-out infinite;
+}
+
+/* ── Settings modal ───────────────────────────────────────────────────────── */
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 50;
+  animation: fadeIn 0.15s ease;
+}
+.modal-content {
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border);
+  border-radius: 12px;
+  padding: 20px;
+  width: 300px;
+  max-width: 90vw;
 }

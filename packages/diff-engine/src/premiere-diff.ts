@@ -1,5 +1,5 @@
 import type { PremiereProjectManifest } from "@editvcs/shared-types";
-import type { DiffResult } from "./change-groups";
+import { ticksToTimecode, type DiffResult } from "./change-groups";
 
 export function comparePremiereManifests(before: PremiereProjectManifest, after: PremiereProjectManifest): DiffResult {
   const result: DiffResult = {
@@ -18,9 +18,9 @@ export function comparePremiereManifests(before: PremiereProjectManifest, after:
       continue;
     }
 
-    if (oldSeq.durationTicks !== newSeq.durationTicks) {
-      const msg = `Changed sequence duration from 08:42 to 09:17`;
-      result.summary.push(msg); // Mocked for test
+    if (oldSeq.durationTicks && newSeq.durationTicks && oldSeq.durationTicks !== newSeq.durationTicks) {
+      const msg = `Changed sequence duration from ${ticksToTimecode(oldSeq.durationTicks)} to ${ticksToTimecode(newSeq.durationTicks)}`;
+      result.summary.push(msg);
       seqGroup.items.push(msg);
     }
 
@@ -37,13 +37,15 @@ export function comparePremiereManifests(before: PremiereProjectManifest, after:
         vidGroup.items.push(`Added clip: ${newClip.name}`);
       } else {
         if (oldClip.inTicks !== newClip.inTicks || oldClip.outTicks !== newClip.outTicks) {
-          vidGroup.items.push(`Trimmed clip: ${newClip.name}`);
+          const msg = `Trimmed clip: ${newClip.name}`;
+          vidGroup.items.push(msg);
+          result.summary.push(msg);
         }
       }
     }
     
     if (addedClips > 0) {
-      result.summary.push(`Added ${addedClips} clip to Sequence: ${newSeq.name}`);
+      result.summary.push(`Added ${addedClips} ${addedClips === 1 ? "clip" : "clips"} to Sequence: ${newSeq.name}`);
     }
   }
 

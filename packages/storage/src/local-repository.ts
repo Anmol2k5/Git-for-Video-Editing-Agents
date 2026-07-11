@@ -22,6 +22,18 @@ export class LocalSnapshotRepository {
     }
   }
 
+  async checkHealth(): Promise<{ ok: boolean; error?: string }> {
+    try {
+      await this.init();
+      const testFile = path.join(this.rootDir, `.health-${Date.now()}`);
+      await fs.writeFile(testFile, "ok");
+      await fs.unlink(testFile);
+      return { ok: true };
+    } catch (e: any) {
+      return { ok: false, error: e.message };
+    }
+  }
+
   async storeProjectObject(sourcePath: string) {
     await this.init();
     const sha256 = await hashFileSha256(sourcePath);
@@ -46,5 +58,23 @@ export class LocalSnapshotRepository {
   async saveSnapshot(snapshot: Snapshot) {
     await this.init();
     await writeJsonAtomic(path.join(this.rootDir, "manifests", `${snapshot.id}.json`), snapshot);
+  }
+
+  async listSnapshots(projectId?: string): Promise<Snapshot[]> {
+    await this.init();
+    const manifestsDir = path.join(this.rootDir, "manifests");
+    const files = await fs.readdir(manifestsDir);
+    const snapshots = await Promise.all(
+      files
+        .filter((file) => file.endsWith(".json"))
+        .map(async (file) => {
+          const content = await fs.readFile(path.join(manifestsDir, file), "utf8");
+          return JSON.parse(content) as Snapshot;
+        })
+    );
+
+    return snapshots
+      .filter((snapshot) => !projectId || snapshot.projectId === projectId)
+      .sort((left, right) => right.createdAt.localeCompare(left.createdAt));
   }
 }

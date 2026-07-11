@@ -1,5 +1,5 @@
-import { LocalSnapshotRepository } from "@editvcs/storage";
-import { createSnapshotId } from "@editvcs/core";
+import { LocalSnapshotRepository, sanitizePathHint } from "@editvcs/storage";
+import { createProjectId, createSnapshotId } from "@editvcs/core";
 import type { Snapshot } from "@editvcs/shared-types";
 import path from "node:path";
 import fs from "node:fs/promises";
@@ -8,38 +8,26 @@ export function createSnapshotService(options: { storageRoot: string }) {
   const repo = new LocalSnapshotRepository(options.storageRoot);
 
   return {
-    async createManualSnapshot(opts: { projectPath: string; label: string }): Promise<{ created: boolean; snapshot?: Snapshot }> {
+    async createManualSnapshot(opts: { projectId: string; projectPath: string; label: string }): Promise<{ created: boolean; snapshot?: Snapshot }> {
       const { sha256, objectPath } = await repo.storeProjectObject(opts.projectPath);
-      
-      const parsed = path.parse(opts.projectPath);
-      const projectId = `proj_mock`;
-      const createdAt = new Date().toISOString();
-      const snapId = createSnapshotId(projectId, createdAt, sha256);
 
-      // Check existing manifests for duplicate sha256
-      let isDuplicate = false;
-      try {
-        const manifestsDir = path.join(options.storageRoot, "manifests");
-        const files = await fs.readdir(manifestsDir);
-        for (const file of files) {
-          const content = await fs.readFile(path.join(manifestsDir, file), "utf-8");
-          const snap = JSON.parse(content) as Snapshot;
-          if (snap.projectFile.sha256 === sha256) {
-            isDuplicate = true;
-            break;
-          }
-        }
-      } catch {
-        // Ignored
-      }
-      if (isDuplicate) {
+      // Deduplicate identical project contents before writing a new snapshot.
+      const existing = await repo.listSnapshots(opts.projectId);
+      if (existing.some((snap) => snap.projectFile.sha256 === sha256)) {
         return { created: false };
       }
 
+      const parsed = path.parse(opts.projectPath);
+      const projectId = opts.projectId;
+      const createdAt = new Date().toISOString();
+      const snapId = createSnapshotId(projectId, createdAt, sha256);
+      const byteSize = (await fs.stat(opts.projectPath)).size;
+
       const snapshot: Snapshot = {
+        schemaVersion: 1,
         id: snapId,
         projectId,
-        streamId: "stream_mock",
+        streamId: `stream_${projectId}`,
         createdAt,
         createdBy: "local-user",
         trigger: "manual",
@@ -48,12 +36,12 @@ export function createSnapshotService(options: { storageRoot: string }) {
           originalFileName: parsed.base,
           sourceExtension: ".prproj",
           sha256,
-          byteSize: 1024,
+          byteSize,
           objectPath
         },
         manifest: {
           projectName: parsed.name,
-          projectPathHint: opts.projectPath,
+          projectPathHint: sanitizePathHint(opts.projectPath),
           capturedAt: createdAt,
           sequences: []
         },
@@ -63,6 +51,14 @@ export function createSnapshotService(options: { storageRoot: string }) {
       await repo.saveSnapshot(snapshot);
 
       return { created: true, snapshot };
+    },
+
+    async listSnapshots(projectId?: string): Promise<Snapshot[]> {
+      return repo.listSnapshots(projectId);
+    },
+    
+    async checkHealth(): Promise<{ ok: boolean; error?: string }> {
+      return repo.checkHealth();
     }
   };
 }
