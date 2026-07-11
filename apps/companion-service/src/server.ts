@@ -59,7 +59,13 @@ export function createServer(options: {
   
   app.use(express.json({ limit: "1mb" }));
 
-  app.get("/health", (req, res) => res.json({ status: "ok" }));
+  app.get("/health", async (req, res) => {
+    const health = await snapshotService.checkHealth();
+    if (!health.ok) {
+      return res.status(503).json({ status: "error", error: health.error });
+    }
+    res.json({ status: "ok" });
+  });
 
   // Pairing flow
   app.post("/pair/start", (req, res) => {

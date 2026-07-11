@@ -24,6 +24,7 @@ export function createSnapshotService(options: { storageRoot: string }) {
       const byteSize = (await fs.stat(opts.projectPath)).size;
 
       const snapshot: Snapshot = {
+        schemaVersion: 1,
         id: snapId,
         projectId,
         streamId: `stream_${projectId}`,
@@ -54,6 +55,10 @@ export function createSnapshotService(options: { storageRoot: string }) {
 
     async listSnapshots(projectId?: string): Promise<Snapshot[]> {
       return repo.listSnapshots(projectId);
+    },
+    
+    async checkHealth(): Promise<{ ok: boolean; error?: string }> {
+      return repo.checkHealth();
     }
   };
 }

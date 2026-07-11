@@ -4,6 +4,7 @@ export type SnapshotTrigger = "manual" | "automatic" | "before-restore" | "cloud
 export type CloudStatus = "local-only" | "queued" | "synced" | "failed";
 
 export interface Snapshot {
+  schemaVersion?: number;
   id: string;
   projectId: string;
   parentSnapshotId?: string;

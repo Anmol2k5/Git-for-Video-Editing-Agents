@@ -22,6 +22,18 @@ export class LocalSnapshotRepository {
     }
   }
 
+  async checkHealth(): Promise<{ ok: boolean; error?: string }> {
+    try {
+      await this.init();
+      const testFile = path.join(this.rootDir, `.health-${Date.now()}`);
+      await fs.writeFile(testFile, "ok");
+      await fs.unlink(testFile);
+      return { ok: true };
+    } catch (e: any) {
+      return { ok: false, error: e.message };
+    }
+  }
+
   async storeProjectObject(sourcePath: string) {
     await this.init();
     const sha256 = await hashFileSha256(sourcePath);
