@@ -8,17 +8,17 @@ export function createSnapshotService(options: { storageRoot: string }) {
   const repo = new LocalSnapshotRepository(options.storageRoot);
 
   return {
-    async createManualSnapshot(opts: { projectPath: string; label: string }): Promise<{ created: boolean; snapshot?: Snapshot }> {
+    async createManualSnapshot(opts: { projectId: string; projectPath: string; label: string }): Promise<{ created: boolean; snapshot?: Snapshot }> {
       const { sha256, objectPath } = await repo.storeProjectObject(opts.projectPath);
 
       // Deduplicate identical project contents before writing a new snapshot.
-      const existing = await repo.listSnapshots();
+      const existing = await repo.listSnapshots(opts.projectId);
       if (existing.some((snap) => snap.projectFile.sha256 === sha256)) {
         return { created: false };
       }
 
       const parsed = path.parse(opts.projectPath);
-      const projectId = createProjectId("premiere", opts.projectPath);
+      const projectId = opts.projectId;
       const createdAt = new Date().toISOString();
       const snapId = createSnapshotId(projectId, createdAt, sha256);
       const byteSize = (await fs.stat(opts.projectPath)).size;

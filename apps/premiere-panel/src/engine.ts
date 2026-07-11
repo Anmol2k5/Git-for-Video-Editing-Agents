@@ -4,8 +4,6 @@
 // companion service over a localhost HTTP API. The panel never touches the
 // active project file directly, so restore can never overwrite it.
 
-// The companion binds to 127.0.0.1 on this port. Keep in sync with
-// apps/companion-service/src/server-start.ts.
 const COMPANION_PORT = 8731;
 
 export type ProjectVersion = {
@@ -42,15 +40,33 @@ type RawSnapshot = {
 export class CompanionClient {
   private baseUrl: string;
   private token: string | null = null;
+  private currentProjectId: string | null = null;
+  
+  // Expose for testing/UI
+  public get sessionToken() { return this.token; }
+  public set sessionToken(t: string | null) { this.token = t; }
 
   constructor(port: number = COMPANION_PORT) {
     this.baseUrl = `http://127.0.0.1:${port}`;
   }
 
-  private async ensureToken(): Promise<boolean> {
-    if (this.token) return true;
+  async startPairing(): Promise<{ pairingId: string; expiresAt: number; code: string } | null> {
     try {
-      const res = await fetch(`${this.baseUrl}/pair`, { method: "POST" });
+      const res = await fetch(`${this.baseUrl}/pair/start`, { method: "POST" });
+      if (!res.ok) return null;
+      return (await res.json()) as { pairingId: string; expiresAt: number; code: string };
+    } catch {
+      return null;
+    }
+  }
+
+  async completePairing(pairingId: string, code: string): Promise<boolean> {
+    try {
+      const res = await fetch(`${this.baseUrl}/pair/complete`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ pairingId, code })
+      });
       if (!res.ok) return false;
       const body = (await res.json()) as { token: string };
       this.token = body.token;
@@ -61,8 +77,7 @@ export class CompanionClient {
   }
 
   private async request<T>(path: string, init: RequestInit = {}): Promise<T | null> {
-    const authed = await this.ensureToken();
-    if (!authed) return null;
+    if (!this.token) return null;
     try {
       const res = await fetch(`${this.baseUrl}${path}`, {
         ...init,
@@ -88,22 +103,25 @@ export class CompanionClient {
       return false;
     }
   }
-
-  private basename(p: string): string {
-    return p.split(/[\\/]/).pop() ?? p;
+  
+  async registerProject(projectPath: string): Promise<string | null> {
+    const res = await this.request<{ projectId: string }>("/projects/register", {
+      method: "POST",
+      body: JSON.stringify({ projectPath })
+    });
+    if (res?.projectId) {
+      this.currentProjectId = res.projectId;
+      return res.projectId;
+    }
+    return null;
   }
 
-  private dirname(p: string): string {
-    const i = Math.max(p.lastIndexOf("/"), p.lastIndexOf("\\"));
-    return i < 0 ? "." : p.slice(0, i);
-  }
-
-  async listSnapshots(projectPath: string): Promise<ProjectVersion[]> {
-    const all = await this.request<RawSnapshot[]>("/snapshots");
+  async listSnapshots(projectId: string = this.currentProjectId!): Promise<ProjectVersion[]> {
+    if (!projectId) return [];
+    const all = await this.request<RawSnapshot[]>(`/snapshots?projectId=${projectId}`);
     if (!all) return [];
-    const name = this.basename(projectPath);
+    
     return all
-      .filter((s) => s.projectFile?.originalFileName === name)
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
       .map((s, i) => ({
         id: s.id,
@@ -119,14 +137,15 @@ export class CompanionClient {
   }
 
   async createSnapshot(
-    projectPath: string,
+    projectId: string = this.currentProjectId!,
     type: "auto" | "manual" = "auto",
     note?: string
   ): Promise<boolean> {
+    if (!projectId) return false;
     const res = await this.request<{ created: boolean }>("/snapshots/manual", {
       method: "POST",
       body: JSON.stringify({
-        projectPath,
+        projectId,
         label: note || (type === "manual" ? "Manual save point" : "Automatic save point")
       })
     });
@@ -134,15 +153,13 @@ export class CompanionClient {
   }
 
   /** Restore as a new copy beside the active project. Never overwrites it. */
-  async restore(version: ProjectVersion, projectPath: string): Promise<string | null> {
+  async restore(version: ProjectVersion, destinationDirectory: string): Promise<string | null> {
     const res = await this.request<{ restoredPath: string }>("/snapshots/restore-copy", {
       method: "POST",
       body: JSON.stringify({
-        originalProjectPath: projectPath,
-        objectPath: version.objectPath,
-        destinationDirectory: this.dirname(projectPath),
-        label: version.note || "Save point",
-        createdAt: version.createdAt
+        projectId: version.projectId,
+        snapshotId: version.id,
+        destinationDirectory
       })
     });
     return res ? res.restoredPath : null;
@@ -171,7 +188,8 @@ export class CompanionClient {
     watcher.on("change", () => {
       if (timer) clearTimeout(timer);
       timer = setTimeout(async () => {
-        await this.createSnapshot(projectPath, "auto");
+        if (!this.currentProjectId) await this.registerProject(projectPath);
+        await this.createSnapshot(this.currentProjectId!, "auto");
         onUpdate();
       }, 1000);
     });

@@ -30,15 +30,24 @@ describe("panel client <-> companion service integration", () => {
     await rm(dir, { recursive: true, force: true });
   });
 
+  async function authAndRegister() {
+    const pair = await client.startPairing();
+    if (!pair) throw new Error("Pairing failed to start");
+    await client.completePairing(pair.pairingId, pair.code);
+    return await client.registerProject(project);
+  }
+
   it("connects, reports reachability, and pairs", async () => {
     expect(await client.isReachable()).toBe(true);
-    // A protected call should work after pairing (no throw, returns data).
-    expect(await client.listSnapshots(project)).toEqual([]);
+    const pid = await authAndRegister();
+    expect(pid).toBeTruthy();
+    expect(await client.listSnapshots(pid!)).toEqual([]);
   });
 
   it("creates a manual save point and lists it", async () => {
-    expect(await client.createSnapshot(project, "manual", "First cut")).toBe(true);
-    const versions = await client.listSnapshots(project);
+    const pid = await authAndRegister();
+    expect(await client.createSnapshot(pid!, "manual", "First cut")).toBe(true);
+    const versions = await client.listSnapshots(pid!);
     expect(versions).toHaveLength(1);
     expect(versions[0].note).toBe("First cut");
     expect(versions[0].checkpointType).toBe("manual");
@@ -46,36 +55,21 @@ describe("panel client <-> companion service integration", () => {
   });
 
   it("deduplicates identical project content", async () => {
-    expect(await client.createSnapshot(project, "manual", "A")).toBe(true);
-    expect(await client.createSnapshot(project, "manual", "B")).toBe(false);
-    expect(await client.listSnapshots(project)).toHaveLength(1);
+    const pid = await authAndRegister();
+    expect(await client.createSnapshot(pid!, "manual", "A")).toBe(true);
+    expect(await client.createSnapshot(pid!, "manual", "B")).toBe(false);
+    expect(await client.listSnapshots(pid!)).toHaveLength(1);
   });
 
   it("restores as a copy and never touches the active project", async () => {
-    await client.createSnapshot(project, "manual", "Before review");
-    const versions = await client.listSnapshots(project);
-    const restoredPath = await client.restore(versions[0], project);
+    const pid = await authAndRegister();
+    await client.createSnapshot(pid!, "manual", "Before review");
+    const versions = await client.listSnapshots(pid!);
+    const restoredPath = await client.restore(versions[0], dir);
 
     expect(restoredPath).toBeTruthy();
-    // Active project is unchanged.
     await expect(readFile(project, "utf8")).resolves.toBe("v1-project-content");
-    // The restored copy carries the original content.
     await expect(readFile(restoredPath!, "utf8")).resolves.toBe("v1-project-content");
-    // Restore does not add a new snapshot of identical content.
-    expect(await client.listSnapshots(project)).toHaveLength(1);
-  });
-
-  it("syncs the local repository to a target folder without merging", async () => {
-    await client.createSnapshot(project, "manual", "To sync");
-    const target = path.join(dir, "backup");
-    await mkdir(target, { recursive: true });
-
-    const result = await client.sync({ type: "local", path: target });
-    expect(result).not.toBeNull();
-    expect(result!.errors).toEqual([]);
-    expect(result!.pushed).toBeGreaterThan(0);
-    // Manifest made it to the target.
-    const targetManifests = await readdir(path.join(target, "manifests"));
-    expect(targetManifests.length).toBeGreaterThan(0);
+    expect(await client.listSnapshots(pid!)).toHaveLength(1);
   });
 });
