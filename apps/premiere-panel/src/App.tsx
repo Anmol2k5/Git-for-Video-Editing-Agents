@@ -126,6 +126,7 @@ function App() {
   const [activity, setActivity] = useState<ActivityEntry[]>([
     { id: 1, message: 'EditVCS panel ready.', time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) }
   ]);
+  const [companionHealthy, setCompanionHealthy] = useState(true);
 
   const addActivity = useCallback((message: string) => {
     setActivity(prev => [{
@@ -135,23 +136,37 @@ function App() {
     }, ...prev].slice(0, 50));
   }, []);
 
+  const checkHealth = useCallback(async () => {
+    const isOk = await client.isReachable();
+    if (companionHealthy !== isOk) {
+      setCompanionHealthy(isOk);
+      if (!isOk) addActivity("Warning: Companion service disconnected or unhealthy.");
+    }
+  }, [companionHealthy, addActivity]);
+
+  useEffect(() => {
+    const timer = setInterval(checkHealth, 5000);
+    return () => clearInterval(timer);
+  }, [checkHealth]);
+
   const loadProject = useCallback(async () => {
     if (window.CSInterface) {
       const csInterface = new window.CSInterface();
       csInterface.evalScript("$._editvcs.getActiveProjectPath()", async (res: string) => {
         if (res && res !== "") {
-          setProjectPath(res);
-          setVersions(await client.listSnapshots(res));
-          client.watchProject(res, async () => {
-            setVersions(await client.listSnapshots(res));
-          });
+          const registeredId = await client.registerProject(res);
+          if (registeredId) {
+            setProjectPath(res);
+            setVersions(await client.listSnapshots(registeredId));
+            client.watchProject(res, async () => {
+              setVersions(await client.listSnapshots(registeredId));
+            });
+          }
         }
       });
     } else {
-      // Mock for browser testing
-      const mockPath = "E:\\Projects\\Demo.prproj";
-      setProjectPath(mockPath);
-      setVersions(await client.listSnapshots(mockPath));
+      // Running outside CEP environment
+      setActivity([{ id: Date.now(), message: "Running outside Premiere CEP environment.", time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) }]);
     }
   }, []);
 
@@ -285,6 +300,12 @@ function App() {
         </div>
       </div>
 
+      {!companionHealthy && (
+        <div className="px-4 py-2 flex items-center gap-2 text-xs font-semibold" style={{ background: '#ef4444', color: '#fff' }}>
+          <span>Warning: Companion service disconnected or unhealthy.</span>
+        </div>
+      )}
+
       {/* ── Project bar ────────────────────────────────────────────────── */}
       <div className="px-4 py-2 flex items-center justify-between" style={{ borderBottom: '1px solid var(--color-border)' }}>
         <div className="flex items-center gap-2 overflow-hidden min-w-0">
@@ -326,6 +347,7 @@ function App() {
                   className={`btn text-xs ${syncPath ? 'btn-ghost' : 'btn-primary'}`}
                   onClick={handleSync}
                   disabled={isSyncingRemote}
+                  title="Experimental Feature"
                 >
                   {isSyncingRemote
                     ? <RefreshCw size={12} className="animate-spin" />
@@ -334,6 +356,7 @@ function App() {
                       : <CloudUpload size={12} />
                   }
                   {isSyncingRemote ? 'Syncing...' : syncLabel}
+                  <span className="ml-1 text-[9px] uppercase font-bold text-yellow-500 bg-yellow-500/10 px-1 rounded">Exp</span>
                 </button>
               </div>
             </Accordion>

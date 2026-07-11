@@ -23,7 +23,15 @@ EditVCS gives video editors GitHub-style version history without asking them to 
 
 ## Architecture Overview
 
-EditVCS uses a local node-based companion service to handle git-like snapshots, while a Premiere UXP panel acts as the frontend interface for the editor.
+EditVCS uses a local Node-based companion service to handle Git-like snapshots securely outside the host environment. The frontend interface for the editor is an Adobe CEP panel, which is the canonical supported runtime for Phase 1. 
+
+## Maturity Labels
+
+- **Core Versioning**: 🟢 Stable. Snapshot creation, file deduplication, and atomic restore-as-copy are robust and verified.
+- **Project Registration**: 🟢 Stable. Strict path canonicalization and verification are enforced.
+- **Sync/Cloud Backup**: 🟡 Experimental. Currently relies on a rudimentary GitHub/local sync endpoint. Do not rely on it for critical automated backup.
+- **Premiere Diffing**: 🟡 Experimental. Project structure diffing is basic and might miss specific effects or nested sequences.
+- **Authentication**: 🟢 Stable. A secure 6-digit one-time code pairing flow is required to connect the panel to the companion.
 
 ## Setup
 
