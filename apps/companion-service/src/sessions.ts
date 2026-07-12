@@ -13,16 +13,21 @@ function hashToken(token: string): string {
 }
 
 export const sessionManager = {
-  createSession(): { token: string; expiresAt: number } {
-    const token = randomBytes(32).toString("base64url");
+  // Clear all sessions (used on companion restart)
+  reset(): void {
+    sessions.clear();
+  },
+
+  createSession(): { sessionToken: string; expiresAt: number } {
+    const sessionToken = randomBytes(32).toString("base64url");
     const expiresAt = Date.now() + SESSION_DURATION_MS;
     
-    sessions.set(hashToken(token), {
-      tokenHash: hashToken(token),
+    sessions.set(hashToken(sessionToken), {
+      tokenHash: hashToken(sessionToken),
       expiresAt
     });
     
-    return { token, expiresAt };
+    return { sessionToken, expiresAt };
   },
   
   isValid(token: string): boolean {
@@ -37,10 +42,12 @@ export const sessionManager = {
     return true;
   },
   
-  refresh(token: string): { token: string; expiresAt: number } | null {
+  refresh(token: string): { sessionToken: string; expiresAt: number } | null {
     if (!this.isValid(token)) return null;
     
+    // Revoke the old token (rotation)
     this.revoke(token);
+    // Create and return a new session
     return this.createSession();
   },
   

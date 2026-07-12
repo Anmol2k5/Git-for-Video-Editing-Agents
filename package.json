@@ -22,9 +22,12 @@
     "lint": "npm run lint --workspaces --if-present",
     "editvcs:test": "npm run test --workspaces --if-present",
     "editvcs:lint": "npm run lint --workspaces --if-present",
-    "editvcs:build": "npm run build --workspaces --if-present",
+    "editvcs:build": "npm --workspace packages/shared-types run build && npm --workspace packages/core run build && npm --workspace packages/diff-engine run build && npm --workspace packages/storage run build && npm --workspace packages/host-adapters run build && npm --workspace apps/companion-service run build && npm --workspace apps/premiere-panel run build && npm --workspace apps/premiere-plugin run build",
     "editvcs:companion": "npm --workspace apps/companion-service run dev",
-    "editvcs:premiere": "npm --workspace apps/premiere-plugin run dev"
+    "editvcs:premiere": "npm --workspace apps/premiere-panel run dev",
+    "editvcs:uxp:dev": "npm --workspace apps/premiere-plugin run dev",
+    "editvcs:uxp:build": "npm --workspace apps/premiere-plugin run build",
+    "verify:repository": "node scripts/verify-repository.js"
   },
   "dependencies": {
     "chalk": "^5.3.0",
@@ -33,9 +36,9 @@
     "diff": "^7.0.0",
     "express": "^5.2.1",
     "ora": "^8.1.0",
-    "simple-git": "^3.27.0",
     "react": "^19.2.7",
-    "react-dom": "^19.2.7"
+    "react-dom": "^19.2.7",
+    "simple-git": "^3.27.0"
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.3.2",
@@ -47,6 +50,7 @@
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^6.0.3",
     "chokidar": "^5.0.0",
+    "esbuild": "^0.28.1",
     "lucide-react": "^1.23.0",
     "tailwindcss": "^4.3.2",
     "typescript": "^5.7.0",

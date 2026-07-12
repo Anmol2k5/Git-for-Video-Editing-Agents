@@ -1,36 +1,37 @@
 import express from "express";
 import cors from "cors";
+import path from "node:path";
+import fs from "node:fs/promises";
 import { createAuthenticator } from "./auth";
 import { createSnapshotService } from "./snapshot-service";
 import { createRestoreCopy } from "./restore-copy";
-import { createStreamsService } from "./streams-service";
-import { sync, type SyncTarget, type SyncResult } from "@editvcs/storage";
 import { config } from "./config";
-import { projectRegistry } from "./project-registry";
+import { ProjectRegistry } from "./project-registry";
 import { pairingService } from "./pairing";
 import { sessionManager } from "./sessions";
+import { watchProjectFileForSnapshots } from "./file-watcher";
 import {
   registerProjectSchema,
   createSnapshotSchema,
   restoreCopySchema,
   pairCompleteSchema,
-  refreshSessionSchema
+  refreshSessionSchema,
+  changesQuerySchema
 } from "./schemas";
 
-export function createServer(options: {
+export async function createServer(options: {
   port: number;
   storageRoot?: string;
 }) {
   const app = express();
   const storageRoot = options.storageRoot ?? config.storageRoot;
   
-  projectRegistry.setStorageRoot(storageRoot);
-  projectRegistry.load().catch(console.error);
+  // Await registry load before starting
+  const registry = new ProjectRegistry(storageRoot);
+  await registry.load();
   
   const snapshotService = createSnapshotService({ storageRoot });
-  const streamsService = createStreamsService();
-
-  let syncTarget: SyncTarget | null = null;
+  const activeWatchers = new Map<string, any>();
 
   const allowedDevelopmentOrigins = new Set([
     `http://127.0.0.1:${config.devPanelPort}`,
@@ -40,6 +41,7 @@ export function createServer(options: {
   app.use(
     cors({
       origin(origin, callback) {
+        // Allow no-origin request (empty origin) from packaged CEP
         if (!origin) {
           return callback(null, true);
         }
@@ -57,7 +59,7 @@ export function createServer(options: {
     })
   );
   
-  app.use(express.json({ limit: "1mb" }));
+  app.use(express.json({ limit: "1.5mb" }));
 
   app.get("/health", async (req, res) => {
     const health = await snapshotService.checkHealth();
@@ -67,16 +69,22 @@ export function createServer(options: {
     res.json({ status: "ok" });
   });
 
-  // Pairing flow
+  // Pairing endpoints
   app.post("/pair/start", (req, res) => {
-    res.json(pairingService.startPairing());
+    try {
+      const pairInfo = pairingService.startPairing();
+      res.json(pairInfo);
+    } catch (err: any) {
+      res.status(429).json({ error: { code: "RATE_LIMIT_EXCEEDED", message: err.message } });
+    }
   });
 
-  app.post("/pair/complete", (req, res, next) => {
+  app.post("/pair/complete", (req, res) => {
     try {
       const { pairingId, code } = pairCompleteSchema.parse(req.body);
-      res.json(pairingService.completePairing(pairingId, code));
-    } catch (err) {
+      const session = pairingService.completePairing(pairingId, code);
+      res.json(session);
+    } catch (err: any) {
       res.status(400).json({ error: { code: "PAIRING_FAILED", message: err instanceof Error ? err.message : "Pairing failed" } });
     }
   });
@@ -108,7 +116,7 @@ export function createServer(options: {
   app.post("/projects/register", async (req, res, next) => {
     try {
       const { projectPath } = registerProjectSchema.parse(req.body);
-      const projectId = await projectRegistry.validateAndRegisterPath(projectPath);
+      const projectId = await registry.validateAndRegisterPath(projectPath);
       res.json({ projectId });
     } catch (error) {
       const message = error instanceof Error ? error.message : "Invalid project path";
@@ -118,17 +126,30 @@ export function createServer(options: {
 
   app.post("/snapshots/manual", async (req, res, next) => {
     try {
-      const { projectId, label } = createSnapshotSchema.parse(req.body);
-      const projectPath = projectRegistry.getCanonicalPath(projectId);
+      const parsedBody = createSnapshotSchema.parse(req.body);
+      
+      // Retrieve the path from registry
+      const projectPath = registry.getCanonicalPath(parsedBody.projectId);
       if (!projectPath) {
         return res.status(404).json({ error: { code: "PROJECT_NOT_FOUND", message: "Project not registered." } });
       }
 
+      // Revalidate active file path before sensitive operation
+      await registry.revalidatePath(parsedBody.projectId);
+
       const result = await snapshotService.createManualSnapshot({
-        projectId,
+        projectId: parsedBody.projectId,
         projectPath,
-        label: label ?? "Manual save point"
+        label: parsedBody.label,
+        trigger: parsedBody.trigger,
+        manifest: parsedBody.manifest,
+        manifestStatus: parsedBody.manifestStatus,
+        manifestReason: parsedBody.manifestReason
       });
+
+      if (!result.created) {
+        return res.status(200).json({ created: false, message: result.reason });
+      }
 
       res.json(result);
     } catch (error) {
@@ -138,7 +159,8 @@ export function createServer(options: {
 
   app.get("/snapshots", async (req, res, next) => {
     try {
-      res.json(await snapshotService.listSnapshots(req.query.projectId ? String(req.query.projectId) : undefined));
+      const projectId = req.query.projectId ? String(req.query.projectId) : undefined;
+      res.json(await snapshotService.listSnapshots(projectId));
     } catch (error) {
       next(error);
     }
@@ -148,7 +170,7 @@ export function createServer(options: {
     try {
       const { projectId, snapshotId, destinationDirectory } = restoreCopySchema.parse(req.body);
       
-      const projectPath = projectRegistry.getCanonicalPath(projectId);
+      const projectPath = registry.getCanonicalPath(projectId);
       if (!projectPath) {
         return res.status(404).json({ error: { code: "PROJECT_NOT_FOUND", message: "Project not registered." } });
       }
@@ -159,13 +181,17 @@ export function createServer(options: {
         return res.status(404).json({ error: { code: "SNAPSHOT_NOT_FOUND", message: "Snapshot not found." } });
       }
 
+      // Derive objects location dynamically at runtime
+      const objectPath = path.join(storageRoot, "objects", snapshot.projectFile.sha256.slice(0, 2), snapshot.projectFile.sha256);
+
       const restoredPath = await createRestoreCopy({
         originalProjectPath: projectPath,
-        objectPath: snapshot.projectFile.objectPath,
+        objectPath,
         destinationDirectory,
         label: snapshot.label ?? "Save point",
         createdAt: snapshot.createdAt,
-        expectedHash: snapshot.projectFile.sha256
+        expectedHash: snapshot.projectFile.sha256,
+        originalFileName: snapshot.projectFile.originalFileName
       });
 
       res.json({ restoredPath });
@@ -174,59 +200,169 @@ export function createServer(options: {
     }
   });
 
-  app.get("/changes", (req, res) => res.json({}));
-  app.get("/cloud/status", (req, res) => res.json({ status: "not-connected", mode: "local-only" }));
-  app.post("/cloud/backup", (req, res) => res.json({ status: "queued" }));
-  app.post("/streams", async (req, res) => res.json(await streamsService.createStream(req.body)));
-  app.get("/streams", async (req, res) => res.json(await streamsService.getStreams(String(req.query.projectId ?? ""))));
-  app.post("/streams/switch", async (req, res) => res.json(await streamsService.switchStream(req.body.streamId)));
-
-  // Sync endpoints
-  app.get("/sync/config", (req, res) => {
-    res.json({ target: syncTarget });
-  });
-
-  app.post("/sync/config", (req, res) => {
-    const { type } = req.body;
-    if (type === "local") {
-      syncTarget = { type: "local", path: req.body.path };
-    } else if (type === "github") {
-      syncTarget = { type: "github", remoteUrl: req.body.remoteUrl };
-    } else {
-      return res.status(400).json({ error: { code: "INVALID_SYNC_TARGET", message: "Invalid sync target type. Use 'local' or 'github'." } });
-    }
-    res.json({ ok: true, target: syncTarget });
-  });
-
-  app.post("/sync", async (req, res, next) => {
+  // Changes endpoint: GET /projects/:projectId/changes?from=<snapshotId>&to=<snapshotId>
+  app.get("/projects/:projectId/changes", async (req, res, next) => {
     try {
-      if (!syncTarget) {
-        return res.status(400).json({ error: { code: "NO_SYNC_TARGET", message: "No sync target configured. POST /sync/config first." } });
+      const { projectId } = req.params;
+      const { from, to } = changesQuerySchema.parse(req.query);
+
+      const projectPath = registry.getCanonicalPath(projectId);
+      if (!projectPath) {
+        return res.status(404).json({ error: { code: "PROJECT_NOT_FOUND", message: "Project not registered." } });
       }
-      const result: SyncResult = await sync(storageRoot, syncTarget);
-      res.json(result);
+
+      const snapshots = await snapshotService.listSnapshots(projectId);
+      const fromSnap = snapshots.find(s => s.id === from);
+      const toSnap = snapshots.find(s => s.id === to);
+
+      if (!fromSnap || !toSnap) {
+        return res.status(404).json({ error: { code: "SNAPSHOT_NOT_FOUND", message: "Snapshot not found." } });
+      }
+
+      if (fromSnap.projectId !== projectId || toSnap.projectId !== projectId) {
+        return res.status(400).json({ error: { code: "INVALID_SNAPSHOT", message: "Snapshots must belong to the specified project." } });
+      }
+
+      if (from === to) {
+        return res.json({
+          fromSnapshotId: from,
+          toSnapshotId: to,
+          confidence: "verified",
+          summary: ["No changes detected (comparing same save point)."],
+          groups: [],
+          unsupported: []
+        });
+      }
+
+      const { comparePremiereManifests } = await import("@editvcs/diff-engine");
+      const diffResult = comparePremiereManifests(fromSnap.manifest, toSnap.manifest);
+
+      const confidence = (fromSnap.manifestStatus === "verified" && toSnap.manifestStatus === "verified")
+        ? "verified"
+        : (fromSnap.manifestStatus === "unavailable" || toSnap.manifestStatus === "unavailable")
+          ? "metadata-unavailable"
+          : "best-effort";
+
+      res.json({
+        fromSnapshotId: from,
+        toSnapshotId: to,
+        confidence,
+        summary: diffResult.summary,
+        groups: diffResult.groups,
+        unsupported: diffResult.unsupported
+      });
     } catch (error) {
       next(error);
     }
+  });
+
+  // Watch endpoints
+  app.post("/projects/:projectId/watch/start", async (req, res, next) => {
+    try {
+      const { projectId } = req.params;
+      const projectPath = registry.getCanonicalPath(projectId);
+      if (!projectPath) {
+        return res.status(404).json({ error: { code: "PROJECT_NOT_FOUND", message: "Project not registered." } });
+      }
+
+      if (activeWatchers.has(projectId)) {
+        return res.json({ status: "watching" });
+      }
+
+      try {
+        await fs.access(projectPath);
+      } catch {
+        return res.status(400).json({ error: { code: "FILE_NOT_FOUND", message: "Project file not found on disk." } });
+      }
+
+      const watcher = await watchProjectFileForSnapshots({
+        projectPath,
+        debounceMs: 2000,
+        onStableChange: async () => {
+          await snapshotService.createManualSnapshot({
+            projectId,
+            projectPath,
+            label: "Automatic save point",
+            trigger: "automatic"
+          });
+        }
+      });
+
+      activeWatchers.set(projectId, watcher);
+      res.json({ status: "watching" });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.post("/projects/:projectId/watch/stop", async (req, res, next) => {
+    try {
+      const { projectId } = req.params;
+      const watcher = activeWatchers.get(projectId);
+      if (watcher) {
+        await watcher.close();
+        activeWatchers.delete(projectId);
+      }
+      res.json({ status: "stopped" });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.get("/projects/:projectId/watch/status", async (req, res) => {
+    const { projectId } = req.params;
+    const isWatching = activeWatchers.has(projectId);
+    res.json({ status: isWatching ? "watching" : "stopped" });
+  });
+
+  // 501 Unfinished fallback endpoints
+  app.get("/cloud/status", (req, res) => {
+    res.status(501).json({ error: { code: "NOT_IMPLEMENTED", message: "Cloud backup is not available in Phase 1." } });
+  });
+
+  app.post("/cloud/backup", (req, res) => {
+    res.status(501).json({ error: { code: "NOT_IMPLEMENTED", message: "Cloud backup is not available in Phase 1." } });
+  });
+
+  app.post("/sync", (req, res) => {
+    res.status(501).json({ error: { code: "NOT_IMPLEMENTED", message: "Sync is not available in Phase 1." } });
+  });
+
+  app.get("/sync/config", (req, res) => {
+    res.status(501).json({ error: { code: "NOT_IMPLEMENTED", message: "Sync is not available in Phase 1." } });
+  });
+
+  app.post("/sync/config", (req, res) => {
+    res.status(501).json({ error: { code: "NOT_IMPLEMENTED", message: "Sync is not available in Phase 1." } });
+  });
+
+  app.post("/streams", (req, res) => {
+    res.status(501).json({ error: { code: "NOT_IMPLEMENTED", message: "Version streams are not available in Phase 1." } });
+  });
+
+  app.get("/streams", (req, res) => {
+    res.status(501).json({ error: { code: "NOT_IMPLEMENTED", message: "Version streams are not available in Phase 1." } });
+  });
+
+  app.post("/streams/switch", (req, res) => {
+    res.status(501).json({ error: { code: "NOT_IMPLEMENTED", message: "Version streams are not available in Phase 1." } });
   });
 
   app.use((error: unknown, req: express.Request, res: express.Response, next: express.NextFunction) => {
     if (res.headersSent) {
       return next(error);
     }
-    // Handle Zod validation errors
     if (error && typeof error === "object" && "name" in error && error.name === "ZodError") {
       return res.status(400).json({ error: { code: "VALIDATION_ERROR", message: "Invalid request payload." } });
     }
-    
     const message = error instanceof Error ? error.message : "Unexpected companion service error";
     res.status(500).json({ error: { code: "INTERNAL_ERROR", message } });
   });
 
-  const server = app.listen(options.port, "127.0.0.1", () => {
-    const address = server.address();
-    const port = typeof address === "object" && address ? address.port : options.port;
-    console.log(`Listening on 127.0.0.1:${port}`);
+  const server = app.listen(options.port, "127.0.0.1");
+
+  await new Promise<void>((resolve) => {
+    server.once("listening", () => resolve());
   });
 
   return server;

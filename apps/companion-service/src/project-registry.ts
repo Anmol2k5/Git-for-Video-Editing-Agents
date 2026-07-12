@@ -2,43 +2,68 @@ import { randomUUID } from "node:crypto";
 import path from "node:path";
 import fs from "node:fs/promises";
 import { writeJsonAtomic } from "@editvcs/storage";
+import { z } from "zod";
 
-interface ProjectRecord {
+export interface ProjectRecord {
   projectId: string;
   canonicalPath: string;
   registeredAt: string;
 }
 
-const registry = new Map<string, ProjectRecord>();
-let storageRootPath = ".editvcs";
+const projectRecordSchema = z.object({
+  projectId: z.string().uuid(),
+  canonicalPath: z.string().min(1),
+  registeredAt: z.string().min(1)
+});
 
-export const projectRegistry = {
-  setStorageRoot(root: string) {
-    storageRootPath = root;
-  },
+export function pathComparisonKey(input: string): string {
+  const normalized = path.normalize(input);
+  return process.platform === "win32"
+    ? normalized.toLowerCase()
+    : normalized;
+}
+
+export class ProjectRegistry {
+  private registry = new Map<string, ProjectRecord>();
+  private storageRootPath: string;
+
+  constructor(storageRoot: string) {
+    this.storageRootPath = storageRoot;
+  }
 
   async load() {
     try {
-      const data = await fs.readFile(path.join(storageRootPath, "registry.json"), "utf-8");
-      const records = JSON.parse(data) as ProjectRecord[];
-      for (const record of records) {
-        registry.set(record.projectId, record);
+      const registryFile = path.join(this.storageRootPath, "registry.json");
+      const data = await fs.readFile(registryFile, "utf-8");
+      const records = JSON.parse(data);
+      if (Array.isArray(records)) {
+        for (const record of records) {
+          const parsed = projectRecordSchema.parse(record);
+          this.registry.set(parsed.projectId, parsed);
+        }
       }
     } catch (err: any) {
       if (err.code !== "ENOENT") {
         console.error("Failed to load project registry:", err);
       }
     }
-  },
+  }
 
   async save() {
-    await fs.mkdir(storageRootPath, { recursive: true });
-    await writeJsonAtomic(path.join(storageRootPath, "registry.json"), Array.from(registry.values()));
-  },
+    await fs.mkdir(this.storageRootPath, { recursive: true });
+    const registryFile = path.join(this.storageRootPath, "registry.json");
+    await writeJsonAtomic(registryFile, Array.from(this.registry.values()));
+  }
 
   async validateAndRegisterPath(inputPath: string): Promise<string> {
     const resolved = path.resolve(inputPath);
-    const canonical = await fs.realpath(resolved);
+    
+    let canonical = resolved;
+    try {
+      canonical = await fs.realpath(resolved);
+    } catch (err) {
+      throw new Error(`File does not exist: ${inputPath}`);
+    }
     
     const stat = await fs.stat(canonical);
     if (!stat.isFile()) {
@@ -57,15 +82,17 @@ export const projectRegistry = {
       throw new Error("Device paths are not supported.");
     }
 
+    const newKey = pathComparisonKey(canonical);
+
     // Check if already registered
-    for (const [id, record] of registry.entries()) {
-      if (record.canonicalPath === canonical) {
+    for (const [id, record] of this.registry.entries()) {
+      if (pathComparisonKey(record.canonicalPath) === newKey) {
         return id;
       }
     }
 
     const projectId = randomUUID();
-    registry.set(projectId, {
+    this.registry.set(projectId, {
       projectId,
       canonicalPath: canonical,
       registeredAt: new Date().toISOString()
@@ -73,15 +100,35 @@ export const projectRegistry = {
 
     await this.save();
     return projectId;
-  },
+  }
 
   getCanonicalPath(projectId: string): string | null {
-    const record = registry.get(projectId);
+    const record = this.registry.get(projectId);
     return record ? record.canonicalPath : null;
-  },
-  
-  isInside(parent: string, child: string): boolean {
-    const relative = path.relative(parent, child);
-    return relative !== "" && !relative.startsWith("..") && !path.isAbsolute(relative);
   }
-};
+
+  async revalidatePath(projectId: string): Promise<string> {
+    const record = this.registry.get(projectId);
+    if (!record) {
+      throw new Error("Project not registered.");
+    }
+    
+    let canonical: string;
+    try {
+      canonical = await fs.realpath(record.canonicalPath);
+    } catch (err) {
+      throw new Error(`Project file no longer exists: ${record.canonicalPath}`);
+    }
+    
+    const stat = await fs.stat(canonical);
+    if (!stat.isFile()) {
+      throw new Error("Project path resolves to something other than a file.");
+    }
+    
+    if (!canonical.toLowerCase().endsWith(".prproj")) {
+      throw new Error("Project file has incorrect extension.");
+    }
+    
+    return canonical;
+  }
+}

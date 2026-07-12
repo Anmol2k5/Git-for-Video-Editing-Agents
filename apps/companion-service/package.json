@@ -5,11 +5,11 @@
   "type": "module",
   "main": "dist/index.js",
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "node esbuild.config.mjs",
     "lint": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
-    "dev": "tsc -p tsconfig.json && node dist/server-start.js",
-    "start": "node dist/server-start.js"
+    "dev": "npm run build && node dist/companion.cjs",
+    "start": "node dist/companion.cjs"
   },
   "dependencies": {
     "@editvcs/core": "*",
