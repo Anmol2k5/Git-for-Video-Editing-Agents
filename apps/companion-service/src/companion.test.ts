@@ -12,8 +12,8 @@ describe("companion service", () => {
     await writeFile(project, "project-v1");
     const service = createSnapshotService({ storageRoot: path.join(dir, ".editvcs") });
 
-    const first = await service.createManualSnapshot({ projectId: "pid", projectPath: project, label: "Before export" });
-    const second = await service.createManualSnapshot({ projectId: "pid", projectPath: project, label: "Before export again" });
+    const first = await service.createManualSnapshot({ projectId: "00000000-0000-0000-0000-000000000000", projectPath: project, label: "Before export" });
+    const second = await service.createManualSnapshot({ projectId: "00000000-0000-0000-0000-000000000000", projectPath: project, label: "Before export again" });
 
     expect(first.created).toBe(true);
     expect(second.created).toBe(false);
@@ -35,10 +35,12 @@ describe("companion service", () => {
       destinationDirectory: dir,
       label: "Client feedback",
       createdAt: "2026-07-05T18:41:00.000Z",
-      expectedHash
+      expectedHash,
+      originalFileName: "Film.prproj"
     });
 
-    // this test is somewhat flawed now without hashing it right. We'll skip it in this unit test or modify it later if it fails.
+    await expect(readFile(active, "utf8")).resolves.toBe("current");
+    await expect(readFile(restoredPath, "utf8")).resolves.toBe("old");
   });
 
   it("pairs with a generated bearer token and protects snapshot routes", async () => {
@@ -46,12 +48,11 @@ describe("companion service", () => {
     const project = path.join(dir, "Film.prproj");
     await writeFile(project, "project-v1");
 
-    const server = createServer({
+    const server = await createServer({
       port: 0,
       storageRoot: path.join(dir, ".editvcs")
     });
 
-    await new Promise<void>((resolve) => server.once("listening", resolve));
     const address = server.address();
     if (!address || typeof address === "string") {
       throw new Error("Expected local server address");
@@ -62,19 +63,26 @@ describe("companion service", () => {
       const rejected = await fetch(`${baseUrl}/projects/register`, { method: "POST" });
       expect(rejected.status).toBe(401);
 
+      // Start pairing - should return pairingId and expiresAt, NOT code
       const startResponse = await fetch(`${baseUrl}/pair/start`, { method: "POST" });
-      const pairInfo = await startResponse.json() as { pairingId: string, code: string };
-      
+      const pairInfo = await startResponse.json() as { pairingId: string, expiresAt: number, code?: string };
+      expect(pairInfo.pairingId).toBeTruthy();
+      expect(pairInfo.code).toBeUndefined();
+
+      const { pairingService } = await import("./pairing");
+      const code = pairingService.getPairingCodeForTest(pairInfo.pairingId);
+      expect(code).toBeTruthy();
+
       const pairResponse = await fetch(`${baseUrl}/pair/complete`, { 
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ pairingId: pairInfo.pairingId, code: pairInfo.code })
+        body: JSON.stringify({ pairingId: pairInfo.pairingId, code })
       });
-      const pairBody = await pairResponse.json() as { token: string };
-      expect(pairBody.token).toBeTruthy();
+      const pairBody = await pairResponse.json() as { sessionToken: string };
+      expect(pairBody.sessionToken).toBeTruthy();
 
       const headers = {
-        authorization: `Bearer ${pairBody.token}`,
+        authorization: `Bearer ${pairBody.sessionToken}`,
         "content-type": "application/json"
       };
 

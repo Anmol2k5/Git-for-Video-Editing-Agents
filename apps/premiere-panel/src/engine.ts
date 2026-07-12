@@ -50,11 +50,11 @@ export class CompanionClient {
     this.baseUrl = `http://127.0.0.1:${port}`;
   }
 
-  async startPairing(): Promise<{ pairingId: string; expiresAt: number; code: string } | null> {
+  async startPairing(): Promise<{ pairingId: string; expiresAt: number } | null> {
     try {
       const res = await fetch(`${this.baseUrl}/pair/start`, { method: "POST" });
       if (!res.ok) return null;
-      return (await res.json()) as { pairingId: string; expiresAt: number; code: string };
+      return (await res.json()) as { pairingId: string; expiresAt: number };
     } catch {
       return null;
     }
@@ -68,8 +68,8 @@ export class CompanionClient {
         body: JSON.stringify({ pairingId, code })
       });
       if (!res.ok) return false;
-      const body = (await res.json()) as { token: string };
-      this.token = body.token;
+      const body = (await res.json()) as { sessionToken: string };
+      this.token = body.sessionToken;
       return true;
     } catch {
       return false;
@@ -87,9 +87,18 @@ export class CompanionClient {
           "content-type": "application/json"
         }
       });
-      if (!res.ok) return null;
+      if (!res.ok) {
+        try {
+          const errBody = await res.json() as any;
+          console.error("API REQUEST ERROR:", errBody);
+        } catch {
+          console.error("API REQUEST FAILED WITH STATUS:", res.status);
+        }
+        return null;
+      }
       return (await res.json()) as T;
-    } catch {
+    } catch (e) {
+      console.error("API REQUEST EXCEPTION:", e);
       return null;
     }
   }
@@ -139,17 +148,24 @@ export class CompanionClient {
   async createSnapshot(
     projectId: string = this.currentProjectId!,
     type: "auto" | "manual" = "auto",
-    note?: string
-  ): Promise<boolean> {
-    if (!projectId) return false;
-    const res = await this.request<{ created: boolean }>("/snapshots/manual", {
+    note?: string,
+    manifest?: any,
+    manifestStatus?: string,
+    manifestReason?: string
+  ): Promise<{ created: boolean; message?: string }> {
+    if (!projectId) return { created: false, message: "No active project registered." };
+    const res = await this.request<{ created: boolean; message?: string }>("/snapshots/manual", {
       method: "POST",
       body: JSON.stringify({
         projectId,
-        label: note || (type === "manual" ? "Manual save point" : "Automatic save point")
+        label: note || (type === "manual" ? "Manual save point" : "Automatic save point"),
+        trigger: type === "manual" ? "manual" : "automatic",
+        manifest,
+        manifestStatus,
+        manifestReason
       })
     });
-    return res?.created === true;
+    return res ?? { created: false, message: "Companion unreachable." };
   }
 
   /** Restore as a new copy beside the active project. Never overwrites it. */
@@ -165,36 +181,44 @@ export class CompanionClient {
     return res ? res.restoredPath : null;
   }
 
+  async getChanges(projectId: string, fromSnapshotId: string, toSnapshotId: string): Promise<{
+    fromSnapshotId: string;
+    toSnapshotId: string;
+    confidence: string;
+    summary: string[];
+    groups: Array<{ title: string; items: string[] }>;
+    unsupported: string[];
+  } | null> {
+    return this.request<{
+      fromSnapshotId: string;
+      toSnapshotId: string;
+      confidence: string;
+      summary: string[];
+      groups: Array<{ title: string; items: string[] }>;
+      unsupported: string[];
+    }>(`/projects/${projectId}/changes?from=${fromSnapshotId}&to=${toSnapshotId}`);
+  }
+
+  async startWatching(projectId: string): Promise<boolean> {
+    const res = await this.request<{ status: string }>(`/projects/${projectId}/watch/start`, { method: "POST" });
+    return res?.status === "watching";
+  }
+
+  async stopWatching(projectId: string): Promise<boolean> {
+    const res = await this.request<{ status: string }>(`/projects/${projectId}/watch/stop`, { method: "POST" });
+    return res?.status === "stopped";
+  }
+
+  async getWatchStatus(projectId: string): Promise<string> {
+    const res = await this.request<{ status: string }>(`/projects/${projectId}/watch/status`);
+    return res?.status ?? "stopped";
+  }
+
   async sync(target: SyncTargetInput): Promise<{ pushed: number; pulled: number; errors: string[] } | null> {
     await this.request("/sync/config", { method: "POST", body: JSON.stringify(target) });
     return this.request<{ pushed: number; pulled: number; errors: string[] }>("/sync", {
       method: "POST"
     });
-  }
-
-  /** Watch the project file and create automatic save points via the companion. */
-  watchProject(projectPath: string, onUpdate: () => void): { close: () => void } | null {
-    const requireFn = (window as any).require;
-    const chokidar = requireFn ? requireFn("chokidar") : null;
-    const fs = requireFn ? requireFn("fs") : null;
-    if (!chokidar || !fs || !fs.existsSync(projectPath)) return null;
-
-    const watcher = chokidar.watch(projectPath, {
-      persistent: true,
-      awaitWriteFinish: { stabilityThreshold: 2000, pollInterval: 100 }
-    });
-
-    let timer: any = null;
-    watcher.on("change", () => {
-      if (timer) clearTimeout(timer);
-      timer = setTimeout(async () => {
-        if (!this.currentProjectId) await this.registerProject(projectPath);
-        await this.createSnapshot(this.currentProjectId!, "auto");
-        onUpdate();
-      }, 1000);
-    });
-
-    return { close: () => watcher.close() };
   }
 }
 
