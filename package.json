@@ -12,6 +12,7 @@
     "test": "npm run editvcs:test",
     "lint": "npm run editvcs:lint",
     "verify": "npm run verify:repository && npm run lint && npm run build && npm run test",
+    "editvcs:build:packages": "npm --workspace packages/shared-types run build && npm --workspace packages/core run build && npm --workspace packages/diff-engine run build && npm --workspace packages/storage run build && npm --workspace packages/host-adapters run build",
     "editvcs:test": "npm run test --workspaces --if-present",
     "editvcs:lint": "npm run lint --workspaces --if-present",
     "editvcs:build": "npm --workspace packages/shared-types run build && npm --workspace packages/core run build && npm --workspace packages/diff-engine run build && npm --workspace packages/storage run build && npm --workspace packages/host-adapters run build && npm --workspace apps/companion-service run build && npm --workspace apps/premiere-panel run build && npm --workspace apps/premiere-plugin run build",
