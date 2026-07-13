@@ -9,14 +9,20 @@ describe("panel client <-> companion service integration", () => {
   let dir: string;
   let project: string;
   let storageRoot: string;
-  let server: ReturnType<typeof createServer>;
+  let server: Awaited<ReturnType<typeof createServer>>;
   let client: CompanionClient;
+
+  let testPresenter: any;
 
   beforeEach(async () => {
     dir = await mkdtemp(path.join(os.tmpdir(), "editvcs-int-"));
     project = path.join(dir, "Film.prproj");
     storageRoot = path.join(dir, ".editvcs");
     await writeFile(project, "v1-project-content");
+
+    const { pairingService, TestPairingPresenter } = await import("./pairing");
+    testPresenter = new TestPairingPresenter();
+    pairingService.presenter = testPresenter;
 
     server = await createServer({ port: 0, storageRoot });
     const address = server.address();
@@ -32,8 +38,7 @@ describe("panel client <-> companion service integration", () => {
   async function authAndRegister() {
     const pair = await client.startPairing();
     if (!pair) throw new Error("Pairing failed to start");
-    const { pairingService } = await import("./pairing");
-    const code = pairingService.getPairingCodeForTest(pair.pairingId);
+    const code = testPresenter.latestCode;
     if (!code) throw new Error("Could not retrieve test pairing code");
     await client.completePairing(pair.pairingId, code);
     return await client.registerProject(project);
@@ -78,8 +83,7 @@ describe("panel client <-> companion service integration", () => {
   it("persists project registry and history across companion restart but invalidates sessions", async () => {
     const pair1 = await client.startPairing();
     expect(pair1).toBeTruthy();
-    const { pairingService } = await import("./pairing");
-    const code1 = pairingService.getPairingCodeForTest(pair1!.pairingId);
+    const code1 = testPresenter.latestCode;
     await client.completePairing(pair1!.pairingId, code1!);
     const pid = await client.registerProject(project);
     expect(pid).toBeTruthy();
@@ -89,8 +93,9 @@ describe("panel client <-> companion service integration", () => {
 
     await new Promise<void>((resolve) => server.close(() => resolve()));
 
-    const { sessionManager } = await import("./sessions");
-    sessionManager.reset();
+    const { pairingService } = await import("./pairing");
+    const { sessionManager: sMgr } = await import("./sessions");
+    sMgr.reset();
     pairingService.reset();
 
     const newServer = await createServer({ port: 0, storageRoot });
@@ -105,7 +110,7 @@ describe("panel client <-> companion service integration", () => {
       expect(unauthSnapshots).toEqual([]);
 
       const pair2 = await newClient.startPairing();
-      const code2 = pairingService.getPairingCodeForTest(pair2!.pairingId);
+      const code2 = testPresenter.latestCode;
       await newClient.completePairing(pair2!.pairingId, code2!);
 
       const history = await newClient.listSnapshots(pid!);
@@ -118,5 +123,24 @@ describe("panel client <-> companion service integration", () => {
     } finally {
       await new Promise<void>((resolve) => newServer.close(() => resolve()));
     }
+  });
+
+  it("allows A -> B -> A snapshots to be created", async () => {
+    const pid = await authAndRegister();
+    
+    // Write A, snapshot
+    await writeFile(project, "A");
+    expect((await client.createSnapshot(pid!, "manual", "First A")).created).toBe(true);
+    
+    // Write B, snapshot
+    await writeFile(project, "B");
+    expect((await client.createSnapshot(pid!, "manual", "First B")).created).toBe(true);
+    
+    // Write A, snapshot again
+    await writeFile(project, "A");
+    expect((await client.createSnapshot(pid!, "manual", "Second A")).created).toBe(true);
+    
+    const snapshots = await client.listSnapshots(pid!);
+    expect(snapshots).toHaveLength(3);
   });
 });

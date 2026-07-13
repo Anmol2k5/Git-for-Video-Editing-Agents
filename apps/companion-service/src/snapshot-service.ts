@@ -86,15 +86,27 @@ export function createSnapshotService(options: { storageRoot: string }) {
         // 3. Compute hash on the temp copy
         const sha256 = await hashFileSha256(tempPath);
 
-        // 4. Check for duplicate content (same SHA-256 in existing snapshots)
+        // 4. Check for duplicate content (only compare against the latest snapshot to allow A -> B -> A)
         const existing = await repo.listSnapshots(opts.projectId);
-        if (existing.some((snap) => snap.projectFile.sha256 === sha256)) {
+        const latest = existing[0];
+        const sameAsLatest = latest?.projectFile.sha256 === sha256;
+        if (sameAsLatest) {
           await fs.unlink(tempPath).catch(() => {});
           return {
             created: false,
             reason: "No file changes detected since the last save point."
           };
         }
+
+        const nextSequenceNumber =
+          existing.length === 0
+            ? 1
+            : Math.max(
+                ...existing.map((snapshot) => snapshot.sequenceNumber ?? 0)
+              ) + 1;
+
+        const tempStat = await fs.stat(tempPath);
+        const byteSize = tempStat.size;
 
         // 5. Verify metadata payload limits
         let finalManifest: PremiereProjectManifest | undefined = undefined;
@@ -138,13 +150,13 @@ export function createSnapshotService(options: { storageRoot: string }) {
         const parsed = path.parse(opts.projectPath);
         const createdAt = new Date().toISOString();
         const snapId = createSnapshotId(opts.projectId, createdAt, sha256);
-        const byteSize = (await fs.stat(opts.projectPath)).size;
 
         const snapshot: Snapshot = {
           schemaVersion: 1,
           id: snapId,
           projectId: opts.projectId,
           streamId: `stream_${opts.projectId}`,
+          sequenceNumber: nextSequenceNumber,
           createdAt,
           createdBy: "local-user",
           trigger: opts.trigger ?? "manual",

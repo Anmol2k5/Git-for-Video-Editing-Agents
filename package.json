@@ -2,24 +2,16 @@
   "name": "editvcs",
   "version": "0.1.0",
   "description": "Universal version control for creative editing — for agents and humans (Premiere Offline)",
-  "main": "dist/cli/index.js",
-  "bin": {
-    "editvcs": "./dist/cli/index.js"
-  },
   "type": "module",
   "workspaces": [
     "apps/*",
     "packages/*"
   ],
   "scripts": {
-    "build:engine": "tsc",
-    "build": "tsc && vite build",
-    "dev": "vite",
-    "preview": "vite preview",
-    "package:zxp": "node scripts/build-zxp.js",
-    "start": "node dist/cli/index.js",
-    "test": "vitest run",
-    "lint": "npm run lint --workspaces --if-present",
+    "build": "npm run editvcs:build",
+    "test": "npm run editvcs:test",
+    "lint": "npm run editvcs:lint",
+    "verify": "npm run verify:repository && npm run lint && npm run build && npm run test",
     "editvcs:test": "npm run test --workspaces --if-present",
     "editvcs:lint": "npm run lint --workspaces --if-present",
     "editvcs:build": "npm --workspace packages/shared-types run build && npm --workspace packages/core run build && npm --workspace packages/diff-engine run build && npm --workspace packages/storage run build && npm --workspace packages/host-adapters run build && npm --workspace apps/companion-service run build && npm --workspace apps/premiere-panel run build && npm --workspace apps/premiere-plugin run build",
@@ -27,6 +19,8 @@
     "editvcs:premiere": "npm --workspace apps/premiere-panel run dev",
     "editvcs:uxp:dev": "npm --workspace apps/premiere-plugin run dev",
     "editvcs:uxp:build": "npm --workspace apps/premiere-plugin run build",
+    "package:cep:unsigned": "node scripts/build-zxp.js --unsigned",
+    "package:cep:signed": "node scripts/build-zxp.js --signed",
     "verify:repository": "node scripts/verify-repository.js"
   },
   "dependencies": {
@@ -67,5 +61,8 @@
     "collaboration",
     "premiere"
   ],
+  "engines": {
+    "node": "^20.19.0 || >=22.12.0"
+  },
   "license": "MIT"
 }

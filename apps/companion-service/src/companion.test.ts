@@ -63,14 +63,17 @@ describe("companion service", () => {
       const rejected = await fetch(`${baseUrl}/projects/register`, { method: "POST" });
       expect(rejected.status).toBe(401);
 
+      const { pairingService, TestPairingPresenter } = await import("./pairing");
+      const testPresenter = new TestPairingPresenter();
+      pairingService.presenter = testPresenter;
+
       // Start pairing - should return pairingId and expiresAt, NOT code
       const startResponse = await fetch(`${baseUrl}/pair/start`, { method: "POST" });
       const pairInfo = await startResponse.json() as { pairingId: string, expiresAt: number, code?: string };
       expect(pairInfo.pairingId).toBeTruthy();
       expect(pairInfo.code).toBeUndefined();
 
-      const { pairingService } = await import("./pairing");
-      const code = pairingService.getPairingCodeForTest(pairInfo.pairingId);
+      const code = testPresenter.latestCode;
       expect(code).toBeTruthy();
 
       const pairResponse = await fetch(`${baseUrl}/pair/complete`, { 

@@ -1,10 +1,10 @@
-import { execSync } from "child_process";
+import { execSync, execFileSync } from "child_process";
 import fs from "fs";
 import path from "path";
 
 const rootDir = process.cwd();
 
-// Staging directories
+// Staging and release directories
 const panelDir = path.join(rootDir, "apps", "premiere-panel");
 const distDir = path.join(panelDir, "dist");
 const csxsDir = path.join(panelDir, "CSXS");
@@ -12,7 +12,20 @@ const jsxDir = path.join(panelDir, "jsx");
 const publicDir = path.join(panelDir, "public");
 
 const stagingDir = path.join(rootDir, "dist-zxp-staging");
-const outputZxp = path.join(rootDir, "com.editvcs.panel.zxp");
+const releaseDir = path.join(rootDir, "release");
+
+const isSigned = process.argv.includes("--signed");
+const isUnsigned = process.argv.includes("--unsigned") || !isSigned;
+
+// Get package version
+let version = "1.0.0";
+try {
+  const pkgContent = fs.readFileSync(path.join(panelDir, "package.json"), "utf8");
+  const pkg = JSON.parse(pkgContent);
+  if (pkg.version) version = pkg.version;
+} catch (e) {
+  console.warn("Could not read version from package.json, defaulting to 1.0.0");
+}
 
 console.log("Building premiere-panel CEP frontend...");
 try {
@@ -43,7 +56,7 @@ if (fs.existsSync(stagingDir)) {
 }
 fs.mkdirSync(stagingDir, { recursive: true });
 
-// Copy directory helper
+// Helper to copy directory
 function copyDir(src, dest) {
   fs.mkdirSync(dest, { recursive: true });
   const entries = fs.readdirSync(src, { withFileTypes: true });
@@ -81,49 +94,79 @@ if (fs.existsSync(path.join(publicDir, "favicon.svg"))) {
   fs.writeFileSync(placeholderIconDest, "placeholder icon content");
 }
 
-// Check for signing certificate in env
-const certPath = process.env.EDITVCS_SIGNING_CERT;
-const certPassword = process.env.EDITVCS_SIGNING_PASSWORD;
-
-if (certPath && certPassword) {
-  console.log("Signing certificate config found. Attempting to sign using ZXPSignCmd...");
-  try {
-    execSync(`ZXPSignCmd -sign "${stagingDir}" "${outputZxp}" "${certPath}" "${certPassword}"`, { stdio: "inherit" });
-    console.log(`Success: Signed package generated at ${outputZxp}`);
-  } catch (err) {
-    console.error("WARNING: ZXPSignCmd signature failed. Falling back to unsigned archive zip.");
-    createUnsignedZxp();
-  }
-} else {
-  console.log("No signing certificate supplied (EDITVCS_SIGNING_CERT / EDITVCS_SIGNING_PASSWORD). Packaging unsigned...");
-  createUnsignedZxp();
+// Make sure release dir exists
+if (!fs.existsSync(releaseDir)) {
+  fs.mkdirSync(releaseDir, { recursive: true });
 }
 
-// Clean up staging folder
-fs.rmSync(stagingDir, { recursive: true, force: true });
+if (isSigned) {
+  console.log("Packaging signed extension...");
+  const certPath = process.env.EDITVCS_SIGNING_CERT;
+  const certPassword = process.env.EDITVCS_SIGNING_PASSWORD;
 
-function createUnsignedZxp() {
-  if (fs.existsSync(outputZxp)) {
-    fs.unlinkSync(outputZxp);
+  if (!certPath || !certPassword) {
+    console.error("ERROR: Signing certificate secrets (EDITVCS_SIGNING_CERT / EDITVCS_SIGNING_PASSWORD) not found.");
+    console.error("Signed build aborted.");
+    fs.rmSync(stagingDir, { recursive: true, force: true });
+    process.exit(1);
   }
+
+  const outputZxp = path.join(releaseDir, `EditVCS-${version}.zxp`);
+  if (fs.existsSync(outputZxp)) fs.unlinkSync(outputZxp);
+
+  try {
+    console.log(`Running ZXPSignCmd to create ${outputZxp}...`);
+    // Use execFileSync to prevent shell interpolation or printing password in logs
+    execFileSync("ZXPSignCmd", [
+      "-sign",
+      stagingDir,
+      outputZxp,
+      certPath,
+      certPassword
+    ], { stdio: "inherit" });
+    console.log(`\nSuccess: Signed package generated at ${outputZxp}`);
+  } catch (err) {
+    console.error("ERROR: ZXPSignCmd signature execution failed:", err.message || String(err));
+    fs.rmSync(stagingDir, { recursive: true, force: true });
+    process.exit(1);
+  }
+} else {
+  console.log("Packaging unsigned developer extension...");
+  const outputZip = path.join(releaseDir, "EditVCS-CEP-unsigned.zip");
+  const outputDevFolder = path.join(releaseDir, "EditVCS-CEP");
+
+  if (fs.existsSync(outputZip)) fs.unlinkSync(outputZip);
+  if (fs.existsSync(outputDevFolder)) fs.rmSync(outputDevFolder, { recursive: true, force: true });
+
+  // 1. Copy staging directly to release folder as directory
+  copyDir(stagingDir, outputDevFolder);
+
+  // 2. Zip staging to release folder
   const isWin = process.platform === "win32";
   try {
     if (isWin) {
-      // Create ZIP using PowerShell's System.IO.Compression
-      execSync(`powershell -Command "Add-Type -AssemblyName System.IO.Compression.FileSystem; [System.IO.Compression.ZipFile]::CreateFromDirectory('${stagingDir}', '${outputZxp}')"`);
+      execSync(`powershell -Command "Add-Type -AssemblyName System.IO.Compression.FileSystem; [System.IO.Compression.ZipFile]::CreateFromDirectory('${stagingDir}', '${outputZip}')"`);
     } else {
-      execSync(`zip -r "${outputZxp}" .`, { cwd: stagingDir });
+      execSync(`zip -r "${outputZip}" .`, { cwd: stagingDir });
     }
-    console.log(`\nSuccess: Unsigned developer package generated at: ${outputZxp}`);
+    console.log(`\nSuccess: Unsigned developer files created:`);
+    console.log(`- Folder: ${outputDevFolder}`);
+    console.log(`- Zip Archive: ${outputZip}`);
     console.log("\nDeveloper Installation Instructions:");
-    console.log("1. Rename .zxp to .zip and extract it to your Adobe Extensions folder:");
+    console.log("1. Extract the Zip Archive to your Adobe Extensions folder:");
     console.log("   - Windows: C:\\Users\\<username>\\AppData\\Roaming\\Adobe\\CEP\\extensions\\EditVCS");
     console.log("   - macOS: ~/Library/Application Support/Adobe/CEP/extensions/EditVCS");
     console.log("2. Enable CEP debug mode on your development machine:");
     console.log("   - Windows: reg add \"HKCU\\Software\\Adobe\\CSXS.11\" /v PlayerDebugMode /t REG_SZ /d 1 /f");
     console.log("   - macOS: defaults write com.adobe.CSXS.11 PlayerDebugMode 1");
   } catch (err) {
-    console.error("Failed to create ZIP package: ", err);
+    console.error("Failed to create ZIP package:", err);
+    fs.rmSync(stagingDir, { recursive: true, force: true });
     process.exit(1);
   }
 }
+
+// Clean up staging folder
+fs.rmSync(stagingDir, { recursive: true, force: true });
+console.log("Packaging staging cleaned up.");
+process.exit(0);

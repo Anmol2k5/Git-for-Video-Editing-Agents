@@ -12,7 +12,8 @@
   },
   "dependencies": {
     "@editvcs/shared-types": "*",
-    "@editvcs/core": "*"
+    "@editvcs/core": "*",
+    "zod": "*"
   },
   "devDependencies": {
     "typescript": "^5.7.0",

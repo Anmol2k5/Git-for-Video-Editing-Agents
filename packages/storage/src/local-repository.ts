@@ -8,11 +8,22 @@ import { writeJsonAtomic } from "./write-json";
 export class LocalSnapshotRepository {
   constructor(private rootDir: string) {}
 
+  private healthWarnings: string[] = [];
+
+  getHealthWarnings(): string[] {
+    return this.healthWarnings;
+  }
+
+  clearHealthWarnings(): void {
+    this.healthWarnings = [];
+  }
+
   async init(): Promise<void> {
     await fs.mkdir(path.join(this.rootDir, "objects"), { recursive: true });
     await fs.mkdir(path.join(this.rootDir, "objects", ".tmp"), { recursive: true });
     await fs.mkdir(path.join(this.rootDir, "temp"), { recursive: true });
     await fs.mkdir(path.join(this.rootDir, "logs"), { recursive: true });
+    await fs.mkdir(path.join(this.rootDir, "recovery"), { recursive: true });
   }
 
   async checkHealth(): Promise<{ ok: boolean; error?: string }> {
@@ -21,6 +32,9 @@ export class LocalSnapshotRepository {
       const testFile = path.join(this.rootDir, `.health-${Date.now()}`);
       await fs.writeFile(testFile, "ok");
       await fs.unlink(testFile);
+      if (this.healthWarnings.length > 0) {
+        return { ok: false, error: `Repository health warnings: ${this.healthWarnings.join("; ")}` };
+      }
       return { ok: true };
     } catch (e: any) {
       return { ok: false, error: e.message };
@@ -76,6 +90,37 @@ export class LocalSnapshotRepository {
     await writeJsonAtomic(path.join(snapDir, `${snapshot.id}.json`), snapshot);
   }
 
+  async loadAndValidateSnapshot(filePath: string): Promise<Snapshot | null> {
+    const { snapshotSchema } = await import("./schemas");
+    try {
+      const content = await fs.readFile(filePath, "utf8");
+      const parsedObj = JSON.parse(content);
+      
+      const validationResult = snapshotSchema.safeParse(parsedObj);
+      if (!validationResult.success) {
+        const fileName = path.basename(filePath);
+        const recoveryPath = path.join(this.rootDir, "recovery", `${Date.now()}-${fileName}`);
+        
+        console.warn(`Validation failed for snapshot ${fileName}:`, validationResult.error.message);
+        this.healthWarnings.push(`Validation failed for snapshot ${fileName}: ${validationResult.error.message}`);
+        
+        // Move invalid file to recovery folder
+        await fs.rename(filePath, recoveryPath).catch(async () => {
+          await fs.copyFile(filePath, recoveryPath);
+          await fs.unlink(filePath);
+        });
+        
+        return null;
+      }
+      return validationResult.data as Snapshot;
+    } catch (err: any) {
+      const fileName = path.basename(filePath);
+      console.error(`Failed to read or parse snapshot at ${fileName}:`, err);
+      this.healthWarnings.push(`Failed to read/parse snapshot at ${fileName}: ${err.message}`);
+      return null;
+    }
+  }
+
   async listSnapshots(projectId?: string): Promise<Snapshot[]> {
     await this.init();
     const snapshots: Snapshot[] = [];
@@ -86,8 +131,8 @@ export class LocalSnapshotRepository {
         const files = await fs.readdir(snapDir);
         for (const file of files) {
           if (file.endsWith(".json")) {
-            const content = await fs.readFile(path.join(snapDir, file), "utf8");
-            snapshots.push(JSON.parse(content) as Snapshot);
+            const snap = await this.loadAndValidateSnapshot(path.join(snapDir, file));
+            if (snap) snapshots.push(snap);
           }
         }
       } catch (err: any) {
@@ -105,8 +150,8 @@ export class LocalSnapshotRepository {
             const files = await fs.readdir(snapDir);
             for (const file of files) {
               if (file.endsWith(".json")) {
-                const content = await fs.readFile(path.join(snapDir, file), "utf8");
-                snapshots.push(JSON.parse(content) as Snapshot);
+                const snap = await this.loadAndValidateSnapshot(path.join(snapDir, file));
+                if (snap) snapshots.push(snap);
               }
             }
           } catch (err: any) {
