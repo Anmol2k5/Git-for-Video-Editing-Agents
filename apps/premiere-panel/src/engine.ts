@@ -15,7 +15,6 @@ export type ProjectVersion = {
   createdAt: string;
   checkpointType: "auto" | "manual";
   note?: string;
-  objectPath?: string;
 };
 
 export type SyncTargetInput = {
@@ -27,13 +26,13 @@ export type SyncTargetInput = {
 type RawSnapshot = {
   id: string;
   projectId: string;
+  sequenceNumber: number;
   createdAt: string;
   trigger: string;
   label?: string;
   projectFile: {
     originalFileName: string;
     sha256: string;
-    objectPath: string;
   };
 };
 
@@ -41,6 +40,7 @@ export class CompanionClient {
   private baseUrl: string;
   private token: string | null = null;
   private currentProjectId: string | null = null;
+  public onUnauthorized?: () => void;
   
   // Expose for testing/UI
   public get sessionToken() { return this.token; }
@@ -87,6 +87,10 @@ export class CompanionClient {
           "content-type": "application/json"
         }
       });
+      if (res.status === 401) {
+        this.token = null;
+        this.onUnauthorized?.();
+      }
       if (!res.ok) {
         try {
           const errBody = await res.json() as any;
@@ -132,16 +136,15 @@ export class CompanionClient {
     
     return all
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
-      .map((s, i) => ({
+      .map((s) => ({
         id: s.id,
         projectId: s.projectId,
-        versionNumber: i + 1,
+        versionNumber: s.sequenceNumber,
         filename: s.projectFile.originalFileName,
         contentHash: s.projectFile.sha256,
         createdAt: s.createdAt,
         checkpointType: s.trigger === "automatic" ? "auto" : "manual",
-        note: s.label,
-        objectPath: s.projectFile.objectPath
+        note: s.label
       }));
   }
 

@@ -64,4 +64,77 @@ describe("Premiere manifest diff — edge cases", () => {
     expect(ticksToTimecode(String(3600 * TPS))).toBe("01:00:00");
     expect(ticksToTimecode(undefined)).toBe("unknown");
   });
+
+  it("reports removed clips when they are present in before but not after", () => {
+    const before = manifest([seq("Main Edit", [{ stableFingerprint: "c1", name: "ClipA", trackType: "video", trackIndex: 1 }])]);
+    const after = manifest([seq("Main Edit", [])]);
+
+    const result = comparePremiereManifests(before, after);
+    expect(result.summary).toContain("Removed 1 clip from Sequence: Main Edit");
+    const group = result.groups.find(g => g.title === "Video timeline");
+    expect(group?.items).toContain("Removed clip: ClipA");
+  });
+
+  it("reports moved clips when start or end ticks change", () => {
+    const before = manifest([seq("Main Edit", [{ stableFingerprint: "c1", name: "ClipA", trackType: "video", trackIndex: 1, startTicks: "100", endTicks: "200" }])]);
+    const after = manifest([seq("Main Edit", [{ stableFingerprint: "c1", name: "ClipA", trackType: "video", trackIndex: 1, startTicks: "150", endTicks: "250" }])]);
+
+    const result = comparePremiereManifests(before, after);
+    expect(result.summary).toContain("Moved clip: ClipA");
+    const group = result.groups.find(g => g.title === "Video timeline");
+    expect(group?.items).toContain("Moved clip: ClipA");
+  });
+
+  it("reports track index changes", () => {
+    const before = manifest([seq("Main Edit", [{ stableFingerprint: "c1", name: "ClipA", trackType: "video", trackIndex: 1 }])]);
+    const after = manifest([seq("Main Edit", [{ stableFingerprint: "c1", name: "ClipA", trackType: "video", trackIndex: 2 }])]);
+
+    const result = comparePremiereManifests(before, after);
+    expect(result.summary).toContain("Track changed for clip: ClipA");
+    const group = result.groups.find(g => g.title === "Video timeline");
+    expect(group?.items).toContain("Track changed for clip: ClipA (from track 1 to 2)");
+  });
+
+  it("reports removed sequences", () => {
+    const before = manifest([seq("Main Edit"), seq("Intro")]);
+    const after = manifest([seq("Main Edit")]);
+
+    const result = comparePremiereManifests(before, after);
+    const seqGroup = result.groups.find(g => g.title === "Sequences");
+    expect(seqGroup?.items).toContain("Removed sequence: Intro");
+  });
+
+  it("reports renamed sequences using stable ID", () => {
+    const before = {
+      projectName: "Test",
+      projectPathHint: "C:/Test.prproj",
+      capturedAt: "2026-07-05T00:00:00.000Z",
+      sequences: [{ id: "seq-1", name: "Old Name", durationTicks: "1000", videoTrackCount: 1, audioTrackCount: 1, clips: [] }]
+    };
+    const after = {
+      projectName: "Test",
+      projectPathHint: "C:/Test.prproj",
+      capturedAt: "2026-07-05T00:00:00.000Z",
+      sequences: [{ id: "seq-1", name: "New Name", durationTicks: "1000", videoTrackCount: 1, audioTrackCount: 1, clips: [] }]
+    };
+
+    const result = comparePremiereManifests(before, after);
+    const seqGroup = result.groups.find(g => g.title === "Sequences");
+    expect(seqGroup?.items).toContain("Renamed sequence from Old Name to New Name");
+  });
+
+  it("reports audio clip changes in Audio timeline group", () => {
+    const before = manifest([seq("Main Edit", [{ stableFingerprint: "c1", name: "AudioClip", trackType: "audio", trackIndex: 1 }])]);
+    const after = manifest([seq("Main Edit", [
+      { stableFingerprint: "c1", name: "AudioClip", trackType: "audio", trackIndex: 1, inTicks: "10" },
+      { stableFingerprint: "c2", name: "NewAudio", trackType: "audio", trackIndex: 2 }
+    ])]);
+
+    const result = comparePremiereManifests(before, after);
+    expect(result.summary).toContain("Trimmed audio clip: AudioClip");
+    expect(result.summary).toContain("Added 1 audio clip to Sequence: Main Edit");
+    const group = result.groups.find(g => g.title === "Audio timeline");
+    expect(group?.items).toContain("Trimmed audio clip: AudioClip");
+    expect(group?.items).toContain("Added audio clip: NewAudio");
+  });
 });

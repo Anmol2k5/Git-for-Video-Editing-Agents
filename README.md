@@ -18,7 +18,7 @@ EditVCS gives video editors GitHub-style version history without asking them to 
 - It does not claim clip-level changes when Premiere does not expose enough data.
 ## Requirements
 
-- Node.js 18 or higher
+- Node.js 20.19+ or 22.12+
 - Adobe Premiere Pro 2023 or newer
 
 ## Architecture Overview
@@ -50,4 +50,3 @@ Contributions are welcome! Please read the contributing guidelines before submit
 ## License
 
 This project is licensed under the MIT License.
-

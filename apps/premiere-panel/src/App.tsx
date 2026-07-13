@@ -17,6 +17,8 @@ type SyncTargetType = 'local' | 'github';
 type ActivityEntry = { id: number; message: string; time: string };
 
 const VITE_EXPERIMENTAL_ENABLED = import.meta.env.VITE_EDITVCS_ENABLE_EXPERIMENTAL_FEATURES === "true";
+const MAX_MANIFEST_SIZE_BYTES = 1024 * 1024;
+const MAX_MANIFEST_CLIPS = 500;
 
 // ─── Accordion component ────────────────────────────────────────────────────
 function Accordion({ title, defaultOpen = true, children }: {
@@ -41,6 +43,24 @@ function Accordion({ title, defaultOpen = true, children }: {
     </div>
   );
 }
+
+const evalScriptWithTimeout = (script: string, timeoutMs: number = 4000): Promise<string> => {
+  return new Promise((resolve) => {
+    if (window.CSInterface) {
+      const csInterface = new window.CSInterface();
+      const timeout = setTimeout(() => {
+        resolve("ERROR_TIMEOUT");
+      }, timeoutMs);
+
+      csInterface.evalScript(script, (res: string) => {
+        clearTimeout(timeout);
+        resolve(res);
+      });
+    } else {
+      resolve("ERROR_NO_CEP");
+    }
+  });
+};
 
 // ─── Main App ───────────────────────────────────────────────────────────────
 function App() {
@@ -102,6 +122,19 @@ function App() {
     }
   }, [sessionToken]);
 
+  // Handle unauthorized response (session expired or companion restarted)
+  useEffect(() => {
+    client.onUnauthorized = () => {
+      setSessionToken(null);
+      setCurrentProjectId(null);
+      setVersions([]);
+      setPairingError("Session expired or companion restarted. Pair again.");
+    };
+    return () => {
+      client.onUnauthorized = undefined;
+    };
+  }, []);
+
   // Timer for pairing code expiration
   useEffect(() => {
     if (pairingTimeLeft <= 0) return;
@@ -141,27 +174,25 @@ function App() {
     if (!sessionToken) return;
     
     if (window.CSInterface) {
-      const csInterface = new window.CSInterface();
-      csInterface.evalScript("$._editvcs.getActiveProjectPath()", async (res: string) => {
-        if (res && res !== "" && res !== "evalFiles") {
-          setProjectPath(res);
-          try {
-            const registeredId = await client.registerProject(res);
-            if (registeredId) {
-              setCurrentProjectId(registeredId);
-              setVersions(await client.listSnapshots(registeredId));
-            } else {
-              addActivity("Error: Failed to register project in companion registry.");
-            }
-          } catch (err: any) {
-            addActivity(`Error: Project registration failed: ${err.message || String(err)}`);
+      const res = await evalScriptWithTimeout("$._editvcs.getActiveProjectPath()", 3000);
+      if (res && res !== "" && res !== "evalFiles" && res !== "ERROR_TIMEOUT" && res !== "ERROR_NO_CEP") {
+        setProjectPath(res);
+        try {
+          const registeredId = await client.registerProject(res);
+          if (registeredId) {
+            setCurrentProjectId(registeredId);
+            setVersions(await client.listSnapshots(registeredId));
+          } else {
+            addActivity("Error: Failed to register project in companion registry.");
           }
-        } else {
-          setProjectPath("");
-          setCurrentProjectId(null);
-          setVersions([]);
+        } catch (err: any) {
+          addActivity(`Error: Project registration failed: ${err.message || String(err)}`);
         }
-      });
+      } else {
+        setProjectPath("");
+        setCurrentProjectId(null);
+        setVersions([]);
+      }
     } else {
       // Mock environment when loaded outside Premiere Pro CEP
       setProjectPath("E:/Work/Film.prproj");
@@ -177,14 +208,12 @@ function App() {
   useEffect(() => {
     if (sessionToken) {
       loadProject();
-      const interval = setInterval(() => {
+      const interval = setInterval(async () => {
         if (window.CSInterface) {
-          const csInterface = new window.CSInterface();
-          csInterface.evalScript("$._editvcs.getActiveProjectPath()", (res: string) => {
-            if (res && res !== "" && res !== "evalFiles" && res !== projectPath) {
-              loadProject();
-            }
-          });
+          const res = await evalScriptWithTimeout("$._editvcs.getActiveProjectPath()", 3000);
+          if (res && res !== "" && res !== "evalFiles" && res !== "ERROR_TIMEOUT" && res !== "ERROR_NO_CEP" && res !== projectPath) {
+            loadProject();
+          }
         }
       }, 5000);
       return () => clearInterval(interval);
@@ -287,7 +316,7 @@ function App() {
           if (Array.isArray(track.clips)) {
             track.clips.forEach((clip: any) => {
               clipsList.push({
-                stableFingerprint: `v_${trackIdx}_${clip.name}_${Math.round(clip.start * 100)}`,
+                stableFingerprint: clip.id || `fallback_video_${clip.name}_${clip.inPoint}_${clip.outPoint}`,
                 name: clip.name,
                 trackType: "video" as const,
                 trackIndex: trackIdx,
@@ -306,7 +335,7 @@ function App() {
           if (Array.isArray(track.clips)) {
             track.clips.forEach((clip: any) => {
               clipsList.push({
-                stableFingerprint: `a_${trackIdx}_${clip.name}_${Math.round(clip.start * 100)}`,
+                stableFingerprint: clip.id || `fallback_audio_${clip.name}_${clip.inPoint}_${clip.outPoint}`,
                 name: clip.name,
                 trackType: "audio" as const,
                 trackIndex: trackIdx,
@@ -367,35 +396,37 @@ function App() {
     };
 
     if (window.CSInterface) {
-      const csInterface = new window.CSInterface();
-      csInterface.evalScript("$._editvcs.saveActiveProject()", async (res: string) => {
-        if (res !== "SUCCESS") {
-          addActivity("Warning: Premiere project save returned FAILED. Attempting backup anyway.");
-        }
+      const res = await evalScriptWithTimeout("$._editvcs.saveActiveProject()", 5000);
+      if (res !== "SUCCESS") {
+        setIsSyncing(false);
+        addActivity("Premiere could not save the project. Save point was not created.");
+        return;
+      }
 
-        // 2. Fetch timeline metadata
-        addActivity("Collecting active sequence timeline metadata...");
-        const timelineData = await getTimelineStatePromise();
+      // 2. Fetch timeline metadata
+      addActivity("Collecting active sequence timeline metadata...");
+      const timelineData = await getTimelineStatePromise();
 
-        // 3. Map to manifest and validate limits
-        const manifest = mapTimelineToManifest(timelineData, projectPath);
-        let status = "verified";
-        let reason = undefined;
+      // 3. Map to manifest and validate limits
+      const manifest = mapTimelineToManifest(timelineData, projectPath);
+      let status = "verified";
+      let reason = undefined;
 
-        const totalClips = manifest.sequences.reduce((acc, s) => acc + (s.clips?.length ?? 0), 0);
-        if (timelineData.error) {
-          status = "unavailable";
-          reason = timelineData.reason || "ExtendScript collection error.";
-        } else if (totalClips > 500) {
-          status = "unavailable";
-          reason = "Timeline clip count exceeded the supported Phase-1 limit.";
-        } else if (JSON.stringify(manifest).length > MAX_MANIFEST_SIZE_BYTES) {
-          status = "unavailable";
-          reason = "Timeline metadata exceeded the Phase-1 size limit.";
-        }
+      const totalClips = manifest.sequences.reduce((acc, s) => acc + (s.clips?.length ?? 0), 0);
+      const manifestBytes = new TextEncoder().encode(JSON.stringify(manifest)).byteLength;
 
-        await executeSnapshotCreation(status === "verified" ? manifest : null, status, reason);
-      });
+      if (timelineData.error) {
+        status = "unavailable";
+        reason = timelineData.reason || "ExtendScript collection error.";
+      } else if (totalClips > MAX_MANIFEST_CLIPS) {
+        status = "unavailable";
+        reason = "Timeline clip count exceeded the supported Phase-1 limit.";
+      } else if (manifestBytes > MAX_MANIFEST_SIZE_BYTES) {
+        status = "unavailable";
+        reason = "Timeline metadata exceeded the Phase-1 size limit.";
+      }
+
+      await executeSnapshotCreation(status === "verified" ? manifest : null, status, reason);
     } else {
       // Mock flow
       const mockManifest = mapTimelineToManifest(

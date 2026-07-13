@@ -4,7 +4,7 @@ This guide walks you through setting up EditVCS for development and testing.
 
 ## Prerequisites
 
-- **Node.js**: v18 or v20
+- **Node.js**: v20.19+ or v22.12+
 - **npm**: v9 or higher
 - **Adobe Premiere Pro**: 2023 or newer
 - **OS**: Windows or macOS (Linux is supported for the companion service, but Adobe Premiere Pro is required for the full experience).

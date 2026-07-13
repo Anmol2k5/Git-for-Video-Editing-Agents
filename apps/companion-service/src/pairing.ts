@@ -15,10 +15,19 @@ export class ConsolePairingPresenter implements PairingCodePresenter {
   }
 }
 
+export class TestPairingPresenter implements PairingCodePresenter {
+  public latestCode: string | null = null;
+  async showCode(code: string, expiresAt: number): Promise<void> {
+    this.latestCode = code;
+  }
+  async clearCode(): Promise<void> {
+    this.latestCode = null;
+  }
+}
+
 interface PairingRecord {
   pairingId: string;
   codeHash: string;
-  codeForTest?: string;
   expiresAt: number;
   attemptsRemaining: number;
 }
@@ -41,10 +50,6 @@ export const pairingService = {
   getPairingsCount(): number {
     this.cleanupExpired();
     return pairings.size;
-  },
-
-  getPairingCodeForTest(pairingId: string): string | undefined {
-    return pairings.get(pairingId)?.codeForTest;
   },
 
   cleanupExpired(): void {
@@ -87,7 +92,6 @@ export const pairingService = {
     pairings.set(pairingId, {
       pairingId,
       codeHash: hashCode(code),
-      codeForTest: code,
       expiresAt,
       attemptsRemaining: MAX_ATTEMPTS
     });
