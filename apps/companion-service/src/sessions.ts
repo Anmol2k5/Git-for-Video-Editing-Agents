@@ -20,6 +20,10 @@ export const sessionManager = {
 
   createSession(): { sessionToken: string; expiresAt: number } {
     const sessionToken = randomBytes(32).toString("base64url");
+    return this.createSessionWithToken(sessionToken);
+  },
+  
+  createSessionWithToken(sessionToken: string): { sessionToken: string; expiresAt: number } {
     const expiresAt = Date.now() + SESSION_DURATION_MS;
     
     sessions.set(hashToken(sessionToken), {

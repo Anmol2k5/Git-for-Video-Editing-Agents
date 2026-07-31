@@ -151,6 +151,8 @@ function App() {
     return () => clearInterval(timer);
   }, [pairingTimeLeft]);
 
+  const [isInitializing, setIsInitializing] = useState(true);
+
   const checkHealth = useCallback(async () => {
     const isOk = await client.isReachable();
     if (companionHealthy !== isOk) {
@@ -163,12 +165,31 @@ function App() {
     }
   }, [companionHealthy, addActivity]);
 
+  // Initialization and auto-start
+  useEffect(() => {
+    let mounted = true;
+    const init = async () => {
+      const success = await client.autoStartCompanion();
+      if (!mounted) return;
+      if (success) {
+        setCompanionHealthy(true);
+        if (client.sessionToken) {
+          setSessionToken(client.sessionToken);
+        }
+      } else {
+        setCompanionHealthy(false);
+      }
+      setIsInitializing(false);
+    };
+    init();
+  }, []);
+
   // Periodic health check
   useEffect(() => {
-    checkHealth();
+    if (isInitializing) return;
     const timer = setInterval(checkHealth, 5000);
     return () => clearInterval(timer);
-  }, [checkHealth]);
+  }, [checkHealth, isInitializing]);
 
   const loadProject = useCallback(async () => {
     if (!sessionToken) return;
@@ -494,6 +515,18 @@ function App() {
 
   // ── Render Screens ────────────────────────────────────────────────────────
 
+  if (isInitializing) {
+    return (
+      <div className="flex h-screen flex-col items-center justify-center p-6 text-center bg-[var(--color-bg-base)] text-[var(--color-text-primary)]">
+        <RefreshCw size={24} className="text-[var(--color-accent)] mb-3 animate-spin" />
+        <h3 className="text-sm font-semibold mb-1">Starting Engine...</h3>
+        <p className="text-[11px] text-[var(--color-text-secondary)]">
+          Initializing local version control.
+        </p>
+      </div>
+    );
+  }
+
   // Screen 1: Companion offline
   if (!companionHealthy) {
     return (
@@ -565,16 +598,27 @@ function App() {
             <Shield size={32} className="text-[var(--color-accent)] mb-3 opacity-80" />
             <h3 className="text-sm font-semibold mb-1">Authorization Required</h3>
             <p className="text-[11px] text-[var(--color-text-secondary)] max-w-[200px] mb-6">
-              You must pair the Premiere panel with the companion service before registering files.
+              The companion service session expired or was disconnected.
             </p>
             {pairingError && (
               <p className="text-[11px] text-[#f87171] mb-3 max-w-[220px]">{pairingError}</p>
             )}
             <button
               className="btn btn-primary w-full h-[44px]"
-              onClick={handleStartPairing}
+              onClick={async () => {
+                setIsInitializing(true);
+                setPairingError(null);
+                const success = await client.autoStartCompanion();
+                if (success) {
+                  setCompanionHealthy(true);
+                  if (client.sessionToken) setSessionToken(client.sessionToken);
+                } else {
+                  setPairingError("Failed to auto-start companion. Is it packaged correctly?");
+                }
+                setIsInitializing(false);
+              }}
             >
-              <Key size={14} /> Pair with Companion
+              <Key size={14} /> Start & Authenticate
             </button>
           </div>
         )}

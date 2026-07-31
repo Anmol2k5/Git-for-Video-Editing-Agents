@@ -117,6 +117,64 @@ export class CompanionClient {
     }
   }
   
+  async autoStartCompanion(): Promise<boolean> {
+    if (await this.isReachable()) return true;
+
+    // Must be in CEP environment to spawn process
+    if (typeof window === "undefined" || !(window as any).require) return false;
+
+    try {
+      const crypto = (window as any).require("crypto");
+      const cp = (window as any).require("child_process");
+      const path = (window as any).require("path");
+      const fs = (window as any).require("fs");
+
+      // Generate a secure auto-pairing token
+      const autoPairToken = crypto.randomBytes(32).toString("base64url");
+
+      // Locate the companion service executable
+      let exePath = "";
+      if ((window as any).CSInterface) {
+        const csInterface = new (window as any).CSInterface();
+        const extensionPath = csInterface.getSystemPath("extension");
+        exePath = path.join(extensionPath, "server", "companion.cjs");
+        
+        // Fallback for local development monorepo
+        if (!fs.existsSync(exePath)) {
+          exePath = path.join(extensionPath, "../../companion-service/dist/companion.cjs");
+        }
+      }
+
+      if (!exePath || !fs.existsSync(exePath)) {
+        console.error("Auto-start failed: Could not locate companion.cjs at", exePath);
+        return false;
+      }
+
+      // Spawn the companion server in the background
+      const env = Object.assign({}, process.env, { EDITVCS_AUTO_PAIR_TOKEN: autoPairToken });
+      const child = cp.spawn(process.execPath, [exePath], {
+        detached: true,
+        stdio: "ignore",
+        env
+      });
+
+      child.unref(); // Allow the parent (Premiere panel) to exit independently of the child
+
+      // Wait for the server to become reachable
+      for (let i = 0; i < 10; i++) {
+        await new Promise(r => setTimeout(r, 500));
+        if (await this.isReachable()) {
+          this.token = autoPairToken;
+          return true;
+        }
+      }
+      return false;
+    } catch (e) {
+      console.error("Auto-start failed with error:", e);
+      return false;
+    }
+  }
+  
   async registerProject(projectPath: string): Promise<string | null> {
     const res = await this.request<{ projectId: string }>("/projects/register", {
       method: "POST",

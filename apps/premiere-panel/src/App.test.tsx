@@ -3,8 +3,8 @@ import { renderToStaticMarkup } from "react-dom/server";
 import App from "./App";
 
 describe("Premiere panel", () => {
-  it("renders the EditVCS shell without a project open", () => {
+  it("renders the EditVCS shell initialization screen", () => {
     const html = renderToStaticMarkup(<App />);
-    expect(html).toContain("EditVCS");
+    expect(html).toContain("Starting Engine...");
   });
 });
