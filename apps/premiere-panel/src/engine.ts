@@ -36,18 +36,46 @@ type RawSnapshot = {
   };
 };
 
+/**
+ * Supervisor states used by the UI to show appropriate feedback.
+ */
+export type CompanionStatus =
+  | "unknown"       // Initial state, haven't checked yet
+  | "starting"      // Spawning the companion process
+  | "connected"     // Healthy and authenticated
+  | "reconnecting"  // Was connected, lost connection, auto-restarting
+  | "failed";       // Exhausted restart attempts
+
 export class CompanionClient {
   private baseUrl: string;
   private token: string | null = null;
   private currentProjectId: string | null = null;
   public onUnauthorized?: () => void;
-  
+  public onStatusChange?: (status: CompanionStatus) => void;
+
+  // Supervisor state
+  private _status: CompanionStatus = "unknown";
+  private restartAttempts = 0;
+  private readonly maxRestarts = 5;
+  private readonly baseRestartDelayMs = 2_000;
+  private lastSuccessfulConnect = 0;
+  private supervisorLock = false;
+
   // Expose for testing/UI
   public get sessionToken() { return this.token; }
   public set sessionToken(t: string | null) { this.token = t; }
 
+  public get status(): CompanionStatus { return this._status; }
+
   constructor(port: number = COMPANION_PORT) {
     this.baseUrl = `http://127.0.0.1:${port}`;
+  }
+
+  private setStatus(s: CompanionStatus): void {
+    if (this._status !== s) {
+      this._status = s;
+      this.onStatusChange?.(s);
+    }
   }
 
   async startPairing(): Promise<{ pairingId: string; expiresAt: number } | null> {
@@ -116,10 +144,91 @@ export class CompanionClient {
       return false;
     }
   }
-  
-  async autoStartCompanion(): Promise<boolean> {
-    if (await this.isReachable()) return true;
 
+  // ── Supervisor: Ensure companion is running ────────────────────────────
+
+  /**
+   * Main entry point for zero-config startup. Called by App.tsx on init
+   * and whenever a health check fails.
+   *
+   * 1. If already reachable + authenticated → return true
+   * 2. If not reachable → spawn the companion with auto-pair token
+   * 3. On failure → retry with exponential backoff up to maxRestarts
+   *
+   * Returns true if the companion is running and the client is authenticated.
+   */
+  async ensureRunning(): Promise<boolean> {
+    // Prevent concurrent supervisor calls
+    if (this.supervisorLock) return this._status === "connected";
+    this.supervisorLock = true;
+
+    try {
+      // Already connected and healthy?
+      if (await this.isReachable() && this.token) {
+        this.setStatus("connected");
+        this.restartAttempts = 0;
+        this.lastSuccessfulConnect = Date.now();
+        return true;
+      }
+
+      // Reachable but no token? Try to start fresh with auto-pair
+      if (await this.isReachable() && !this.token) {
+        // Server is running but we have no session — it was started externally
+        // or we lost our token. The panel needs to pair manually in this case,
+        // unless we can re-spawn with a fresh auto-pair token.
+        // For zero-config: kill and respawn with auto-pair token.
+        // But we can't kill an external process — just try pairing as fallback
+        this.setStatus("connected");
+        return false; // caller will show pairing UI
+      }
+
+      // Not reachable — need to spawn
+      if (this.restartAttempts >= this.maxRestarts) {
+        this.setStatus("failed");
+        return false;
+      }
+
+      this.setStatus(this.restartAttempts === 0 ? "starting" : "reconnecting");
+      const success = await this.spawnCompanion();
+
+      if (success) {
+        this.setStatus("connected");
+        this.restartAttempts = 0;
+        this.lastSuccessfulConnect = Date.now();
+        return true;
+      }
+
+      this.restartAttempts++;
+      this.setStatus(this.restartAttempts >= this.maxRestarts ? "failed" : "reconnecting");
+      return false;
+    } finally {
+      this.supervisorLock = false;
+    }
+  }
+
+  /**
+   * Reset the restart counter. Called by App.tsx after the companion has been
+   * running successfully for a sustained period (e.g. 30 seconds).
+   */
+  resetRestartCounter(): void {
+    this.restartAttempts = 0;
+    if (this._status === "failed") {
+      this.setStatus("unknown");
+    }
+  }
+
+  /**
+   * Get the delay before the next restart attempt (exponential backoff).
+   */
+  getRestartDelayMs(): number {
+    return Math.min(this.baseRestartDelayMs * Math.pow(2, this.restartAttempts), 30_000);
+  }
+
+  /**
+   * Spawn the companion process with an auto-pair token.
+   * Works only in the CEP environment where `window.require` is available.
+   */
+  private async spawnCompanion(): Promise<boolean> {
     // Must be in CEP environment to spawn process
     if (typeof window === "undefined" || !(window as any).require) return false;
 
@@ -138,7 +247,7 @@ export class CompanionClient {
         const csInterface = new (window as any).CSInterface();
         const extensionPath = csInterface.getSystemPath("extension");
         exePath = path.join(extensionPath, "server", "companion.cjs");
-        
+
         // Fallback for local development monorepo
         if (!fs.existsSync(exePath)) {
           exePath = path.join(extensionPath, "../../companion-service/dist/companion.cjs");
@@ -160,7 +269,7 @@ export class CompanionClient {
 
       child.unref(); // Allow the parent (Premiere panel) to exit independently of the child
 
-      // Wait for the server to become reachable
+      // Wait for the server to become reachable (poll up to 10 times, 500ms apart)
       for (let i = 0; i < 10; i++) {
         await new Promise(r => setTimeout(r, 500));
         if (await this.isReachable()) {
@@ -174,7 +283,9 @@ export class CompanionClient {
       return false;
     }
   }
-  
+
+  // ── Project & snapshot operations ──────────────────────────────────────
+
   async registerProject(projectPath: string): Promise<string | null> {
     const res = await this.request<{ projectId: string }>("/projects/register", {
       method: "POST",

@@ -4,7 +4,7 @@ import {
   GitBranch, CloudUpload, Key, Shield, AlertTriangle, CheckCircle,
   HelpCircle, Eye, EyeOff, FolderOpen, Play
 } from 'lucide-react';
-import { companionClient as client, ProjectVersion } from './engine';
+import { companionClient as client, ProjectVersion, CompanionStatus } from './engine';
 import type { PremiereProjectManifest } from '@editvcs/shared-types';
 
 declare global {
@@ -70,7 +70,7 @@ function App() {
   const [isSyncing, setIsSyncing] = useState(false);
   const [saveNote, setSaveNote] = useState("");
   
-  // Pairing State
+  // Pairing State (fallback only — auto-pair is the default path)
   const [sessionToken, setSessionToken] = useState<string | null>(() => {
     return typeof sessionStorage !== 'undefined' ? sessionStorage.getItem('editvcs_session_token') : null;
   });
@@ -78,7 +78,7 @@ function App() {
   const [pairingCode, setPairingCode] = useState("");
   const [pairingError, setPairingError] = useState<string | null>(null);
   const [pairingTimeLeft, setPairingTimeLeft] = useState(0);
-  const [companionHealthy, setCompanionHealthy] = useState(true);
+  const [companionStatus, setCompanionStatus] = useState<CompanionStatus>("unknown");
 
   // Restore State
   const [restoringVersion, setRestoringVersion] = useState<ProjectVersion | null>(null);
@@ -153,43 +153,74 @@ function App() {
 
   const [isInitializing, setIsInitializing] = useState(true);
 
-  const checkHealth = useCallback(async () => {
+  // Listen for status changes from the supervisor
+  useEffect(() => {
+    client.onStatusChange = (status: CompanionStatus) => {
+      setCompanionStatus(status);
+    };
+    return () => { client.onStatusChange = undefined; };
+  }, []);
+
+  /**
+   * Supervisor-aware health check. Instead of just polling, this will
+   * attempt to auto-restart the companion if it goes offline.
+   */
+  const checkHealthAndRestart = useCallback(async () => {
     const isOk = await client.isReachable();
-    if (companionHealthy !== isOk) {
-      setCompanionHealthy(isOk);
-      if (!isOk) {
-        addActivity("Warning: Companion service disconnected or unhealthy.");
-      } else {
+    if (isOk) {
+      if (companionStatus !== "connected") {
+        setCompanionStatus("connected");
         addActivity("Success: Connected to companion service.");
       }
+      return;
     }
-  }, [companionHealthy, addActivity]);
 
-  // Initialization and auto-start
+    // Not reachable — supervisor kicks in
+    addActivity("Warning: Companion service disconnected. Auto-restarting...");
+    const delay = client.getRestartDelayMs();
+    await new Promise(r => setTimeout(r, delay));
+    const success = await client.ensureRunning();
+    if (success && client.sessionToken) {
+      setSessionToken(client.sessionToken);
+      addActivity("Success: Companion auto-restarted and reconnected.");
+    }
+  }, [companionStatus, addActivity]);
+
+  // Initialization and auto-start (zero-config: no manual pairing needed)
   useEffect(() => {
     let mounted = true;
     const init = async () => {
-      const success = await client.autoStartCompanion();
+      setCompanionStatus("starting");
+      const success = await client.ensureRunning();
       if (!mounted) return;
       if (success) {
-        setCompanionHealthy(true);
+        setCompanionStatus("connected");
         if (client.sessionToken) {
           setSessionToken(client.sessionToken);
         }
       } else {
-        setCompanionHealthy(false);
+        // ensureRunning updates status internally (reconnecting/failed)
       }
       setIsInitializing(false);
     };
     init();
   }, []);
 
-  // Periodic health check
+  // Periodic health check with auto-restart supervisor
   useEffect(() => {
     if (isInitializing) return;
-    const timer = setInterval(checkHealth, 5000);
+    const timer = setInterval(checkHealthAndRestart, 5000);
     return () => clearInterval(timer);
-  }, [checkHealth, isInitializing]);
+  }, [checkHealthAndRestart, isInitializing]);
+
+  // Reset restart counter after 30 seconds of sustained uptime
+  useEffect(() => {
+    if (companionStatus !== "connected") return;
+    const timer = setTimeout(() => {
+      client.resetRestartCounter();
+    }, 30_000);
+    return () => clearTimeout(timer);
+  }, [companionStatus]);
 
   const loadProject = useCallback(async () => {
     if (!sessionToken) return;
@@ -527,18 +558,37 @@ function App() {
     );
   }
 
-  // Screen 1: Companion offline
-  if (!companionHealthy) {
+  // Screen 1: Companion offline / reconnecting
+  if (companionStatus === "reconnecting" || companionStatus === "failed") {
     return (
       <div className="flex h-screen flex-col items-center justify-center p-6 text-center bg-[var(--color-bg-base)] text-[var(--color-text-primary)]">
-        <AlertTriangle size={36} className="text-[#f87171] mb-3 animate-pulse" />
-        <h3 className="text-sm font-semibold mb-1">Companion Service Offline</h3>
-        <p className="text-[11px] text-[var(--color-text-secondary)] max-w-[220px] mb-4">
-          Make sure the EditVCS companion service is running. Port 8731 must be open on localhost.
-        </p>
-        <button className="btn btn-ghost" onClick={checkHealth}>
-          <RefreshCw size={12} className="mr-1.5" /> Reconnect
-        </button>
+        {companionStatus === "reconnecting" ? (
+          <>
+            <RefreshCw size={28} className="text-[var(--color-accent)] mb-3 animate-spin" />
+            <h3 className="text-sm font-semibold mb-1">Reconnecting...</h3>
+            <p className="text-[11px] text-[var(--color-text-secondary)] max-w-[220px] mb-4">
+              The companion service went offline. Restarting automatically...
+            </p>
+          </>
+        ) : (
+          <>
+            <AlertTriangle size={36} className="text-[#f87171] mb-3 animate-pulse" />
+            <h3 className="text-sm font-semibold mb-1">Companion Service Unavailable</h3>
+            <p className="text-[11px] text-[var(--color-text-secondary)] max-w-[220px] mb-4">
+              Auto-restart failed after multiple attempts. Check companion logs at <span className="font-mono text-[10px]">%APPDATA%/EditVCS/logs/</span>.
+            </p>
+            <button className="btn btn-primary" onClick={async () => {
+              client.resetRestartCounter();
+              setCompanionStatus("reconnecting");
+              const success = await client.ensureRunning();
+              if (success && client.sessionToken) {
+                setSessionToken(client.sessionToken);
+              }
+            }}>
+              <RefreshCw size={12} className="mr-1.5" /> Try Again
+            </button>
+          </>
+        )}
       </div>
     );
   }
@@ -608,9 +658,10 @@ function App() {
               onClick={async () => {
                 setIsInitializing(true);
                 setPairingError(null);
-                const success = await client.autoStartCompanion();
+                client.resetRestartCounter();
+                const success = await client.ensureRunning();
                 if (success) {
-                  setCompanionHealthy(true);
+                  setCompanionStatus("connected");
                   if (client.sessionToken) setSessionToken(client.sessionToken);
                 } else {
                   setPairingError("Failed to auto-start companion. Is it packaged correctly?");
