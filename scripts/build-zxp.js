@@ -78,6 +78,14 @@ copyDir(distDir, path.join(stagingDir, "dist"));
 copyDir(jsxDir, path.join(stagingDir, "jsx"));
 fs.mkdirSync(path.join(stagingDir, "public"), { recursive: true });
 
+// Copy companion service to staging
+const companionSrc = path.join(rootDir, "apps", "companion-service", "dist");
+if (fs.existsSync(companionSrc)) {
+  copyDir(companionSrc, path.join(stagingDir, "server"));
+} else {
+  console.warn("WARNING: companion-service/dist not found. Ensure it was built first.");
+}
+
 // Copy icons/assets to public staging
 if (fs.existsSync(path.join(publicDir, "favicon.svg"))) {
   fs.copyFileSync(path.join(publicDir, "favicon.svg"), path.join(stagingDir, "public", "favicon.svg"));
