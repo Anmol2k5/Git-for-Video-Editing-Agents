@@ -36,8 +36,9 @@ export class LocalSnapshotRepository {
         return { ok: false, error: `Repository health warnings: ${this.healthWarnings.join("; ")}` };
       }
       return { ok: true };
-    } catch (e: any) {
-      return { ok: false, error: e.message };
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      return { ok: false, error: msg };
     }
   }
 
@@ -113,10 +114,11 @@ export class LocalSnapshotRepository {
         return null;
       }
       return validationResult.data as Snapshot;
-    } catch (err: any) {
+    } catch (err: unknown) {
       const fileName = path.basename(filePath);
+      const msg = err instanceof Error ? err.message : String(err);
       console.error(`Failed to read or parse snapshot at ${fileName}:`, err);
-      this.healthWarnings.push(`Failed to read/parse snapshot at ${fileName}: ${err.message}`);
+      this.healthWarnings.push(`Failed to read/parse snapshot at ${fileName}: ${msg}`);
       return null;
     }
   }
@@ -135,8 +137,8 @@ export class LocalSnapshotRepository {
             if (snap) snapshots.push(snap);
           }
         }
-      } catch (err: any) {
-        if (err.code !== "ENOENT") {
+      } catch (err: unknown) {
+        if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
           console.error(`Failed to read snapshots for project ${projectId}:`, err);
         }
       }
@@ -154,14 +156,14 @@ export class LocalSnapshotRepository {
                 if (snap) snapshots.push(snap);
               }
             }
-          } catch (err: any) {
-            if (err.code !== "ENOENT") {
+          } catch (err: unknown) {
+            if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
               console.error(`Failed to read snapshots in ${snapDir}:`, err);
             }
           }
         }
-      } catch (err: any) {
-        if (err.code !== "ENOENT") {
+      } catch (err: unknown) {
+        if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
           console.error("Failed to list projects directory:", err);
         }
       }

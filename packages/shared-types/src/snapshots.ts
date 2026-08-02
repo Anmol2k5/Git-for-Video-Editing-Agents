@@ -1,4 +1,5 @@
 import type { PremiereProjectManifest } from "./manifests";
+import type { ProjectId, SnapshotId, StreamId } from "./brand";
 
 export type SnapshotTrigger = "manual" | "automatic" | "before-restore" | "cloud-pull";
 export type CloudStatus = "local-only" | "queued" | "synced" | "failed";
@@ -6,10 +7,10 @@ export type ManifestStatus = "verified" | "best-effort" | "unavailable";
 
 export interface Snapshot {
   schemaVersion: 1;
-  id: string;
-  projectId: string;
-  parentSnapshotId?: string;
-  streamId: string;
+  id: SnapshotId;
+  projectId: ProjectId;
+  parentSnapshotId?: SnapshotId;
+  streamId: StreamId;
   sequenceNumber: number;
   createdAt: string;
   createdBy: string;

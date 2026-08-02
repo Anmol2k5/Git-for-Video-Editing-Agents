@@ -109,7 +109,7 @@ export async function createRestoreCopy(opts: {
     // First try link if on same filesystem (where supported)
     try {
       await fs.link(tmpPath, finalPath);
-    } catch (linkErr: any) {
+    } catch (linkErr: unknown) {
       // Fallback to COPYFILE_EXCL copy if link not supported
       await fs.copyFile(tmpPath, finalPath, constants.COPYFILE_EXCL);
     }

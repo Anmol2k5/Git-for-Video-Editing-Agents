@@ -74,8 +74,9 @@ export async function createServer(options: {
     try {
       const pairInfo = pairingService.startPairing();
       res.json(pairInfo);
-    } catch (err: any) {
-      res.status(429).json({ error: { code: "RATE_LIMIT_EXCEEDED", message: err.message } });
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Rate limit exceeded";
+      res.status(429).json({ error: { code: "RATE_LIMIT_EXCEEDED", message: msg } });
     }
   });
 
@@ -84,7 +85,7 @@ export async function createServer(options: {
       const { pairingId, code } = pairCompleteSchema.parse(req.body);
       const session = pairingService.completePairing(pairingId, code);
       res.json(session);
-    } catch (err: any) {
+    } catch (err: unknown) {
       res.status(400).json({ error: { code: "PAIRING_FAILED", message: err instanceof Error ? err.message : "Pairing failed" } });
     }
   });

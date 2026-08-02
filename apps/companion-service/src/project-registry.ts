@@ -42,8 +42,8 @@ export class ProjectRegistry {
           this.registry.set(parsed.projectId, parsed);
         }
       }
-    } catch (err: any) {
-      if (err.code !== "ENOENT") {
+    } catch (err: unknown) {
+      if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
         console.error("Failed to load project registry:", err);
       }
     }
