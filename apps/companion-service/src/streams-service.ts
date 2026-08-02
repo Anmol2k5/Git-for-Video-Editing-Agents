@@ -17,8 +17,8 @@ export function createStreamsService(storageRoot: string = config.storageRoot) {
       for (const stream of list) {
         streams.set(stream.id, stream);
       }
-    } catch (err: any) {
-      if (err.code !== "ENOENT") {
+    } catch (err: unknown) {
+      if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
         console.error("Failed to load streams:", err);
       }
     }

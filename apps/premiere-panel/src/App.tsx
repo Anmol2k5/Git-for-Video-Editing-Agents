@@ -7,11 +7,8 @@ import {
 import { companionClient as client, ProjectVersion, CompanionStatus } from './engine';
 import type { PremiereProjectManifest } from '@editvcs/shared-types';
 
-declare global {
-  interface Window {
-    CSInterface: any;
-  }
-}
+import { getErrorMessage } from './utils';
+import { timelineStateSchema, type TimelineState } from './schemas';
 
 type SyncTargetType = 'local' | 'github';
 type ActivityEntry = { id: number; message: string; time: string };
@@ -237,8 +234,8 @@ function App() {
           } else {
             addActivity("Error: Failed to register project in companion registry.");
           }
-        } catch (err: any) {
-          addActivity(`Error: Project registration failed: ${err.message || String(err)}`);
+        } catch (err: unknown) {
+          addActivity(`Error: Project registration failed: ${getErrorMessage(err)}`);
         }
       } else {
         setProjectPath("");
@@ -316,7 +313,7 @@ function App() {
   };
 
   // ── ExtendScript Timeline Extraction ──────────────────────────────────────
-  const getTimelineStatePromise = (): Promise<any> => {
+  const getTimelineStatePromise = (): Promise<TimelineState> => {
     return new Promise((resolve) => {
       if (window.CSInterface) {
         const csInterface = new window.CSInterface();
@@ -330,10 +327,12 @@ function App() {
             if (!res || res.startsWith("evalFiles") || res === "") {
               resolve({ error: "EMPTY", reason: "No active sequence found." });
             } else {
-              resolve(JSON.parse(res));
+              const rawData = JSON.parse(res);
+              const validatedData = timelineStateSchema.parse(rawData);
+              resolve(validatedData);
             }
-          } catch (err) {
-            resolve({ error: "PARSE_ERROR", reason: "Failed to parse timeline JSON metadata." });
+          } catch (err: unknown) {
+            resolve({ error: "PARSE_ERROR", reason: `Failed to parse timeline JSON metadata: ${getErrorMessage(err)}` });
           }
         });
       } else {
@@ -355,7 +354,7 @@ function App() {
     });
   };
 
-  const mapTimelineToManifest = (timelineData: any, projectFilePath: string): PremiereProjectManifest => {
+  const mapTimelineToManifest = (timelineData: TimelineState, projectFilePath: string): PremiereProjectManifest => {
     const TICKS_PER_SECOND = 254_016_000_000;
     const toTicksStr = (sec: number) => String(Math.round(sec * TICKS_PER_SECOND));
 
@@ -363,10 +362,10 @@ function App() {
     if (timelineData && !timelineData.error) {
       const clipsList: any[] = [];
       
-      if (Array.isArray(timelineData.videoTracks)) {
-        timelineData.videoTracks.forEach((track: any, trackIdx: number) => {
-          if (Array.isArray(track.clips)) {
-            track.clips.forEach((clip: any) => {
+      if (timelineData.videoTracks) {
+        timelineData.videoTracks.forEach((track, trackIdx: number) => {
+          if (track.clips) {
+            track.clips.forEach((clip) => {
               clipsList.push({
                 stableFingerprint: clip.id || `fallback_video_${clip.name}_${clip.inPoint}_${clip.outPoint}`,
                 name: clip.name,
@@ -382,10 +381,10 @@ function App() {
         });
       }
 
-      if (Array.isArray(timelineData.audioTracks)) {
-        timelineData.audioTracks.forEach((track: any, trackIdx: number) => {
-          if (Array.isArray(track.clips)) {
-            track.clips.forEach((clip: any) => {
+      if (timelineData.audioTracks) {
+        timelineData.audioTracks.forEach((track, trackIdx: number) => {
+          if (track.clips) {
+            track.clips.forEach((clip) => {
               clipsList.push({
                 stableFingerprint: clip.id || `fallback_audio_${clip.name}_${clip.inPoint}_${clip.outPoint}`,
                 name: clip.name,
@@ -421,7 +420,7 @@ function App() {
     setIsSyncing(true);
     addActivity("Saving Premiere project file...");
 
-    const executeSnapshotCreation = async (manifestObj: any, statusStr: string, reasonStr?: string) => {
+    const executeSnapshotCreation = async (manifestObj: PremiereProjectManifest | null, statusStr: string, reasonStr?: string) => {
       addActivity("Stable project file verification...");
       try {
         const response = await client.createSnapshot(
@@ -440,8 +439,8 @@ function App() {
         } else {
           addActivity(`Save Point skipped: ${response.message || 'No modifications detected.'}`);
         }
-      } catch (err: any) {
-        addActivity(`Error: Save point creation failed: ${err.message || String(err)}`);
+      } catch (err: unknown) {
+        addActivity(`Error: Save point creation failed: ${getErrorMessage(err)}`);
       } finally {
         setIsSyncing(false);
       }
@@ -511,8 +510,8 @@ function App() {
         addActivity(`Restore copy created: ${restoredPath.split(/[\\/]/).pop()}`);
         setRestoringVersion(null);
       }
-    } catch (err: any) {
-      setRestoreError(err.message || String(err));
+    } catch (err: unknown) {
+      setRestoreError(getErrorMessage(err));
     } finally {
       setRestoreProgress(false);
     }
@@ -533,8 +532,8 @@ function App() {
       } else {
         setDiffResult(result);
       }
-    } catch (err: any) {
-      setDiffError(err.message || String(err));
+    } catch (err: unknown) {
+      setDiffError(getErrorMessage(err));
     } finally {
       setDiffLoading(false);
     }

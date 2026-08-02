@@ -1,6 +1,7 @@
 import { LocalSnapshotRepository, sanitizePathHint, hashFileSha256 } from "@editvcs/storage";
 import { createSnapshotId } from "@editvcs/core";
 import type { Snapshot, PremiereProjectManifest } from "@editvcs/shared-types";
+import { createId } from "@editvcs/shared-types";
 import { waitForStableFile } from "./stable-write";
 import path from "node:path";
 import fs from "node:fs/promises";
@@ -153,9 +154,9 @@ export function createSnapshotService(options: { storageRoot: string }) {
 
         const snapshot: Snapshot = {
           schemaVersion: 1,
-          id: snapId,
-          projectId: opts.projectId,
-          streamId: `stream_${opts.projectId}`,
+          id: createId(snapId),
+          projectId: createId(opts.projectId),
+          streamId: createId(`stream_${opts.projectId}`),
           sequenceNumber: nextSequenceNumber,
           createdAt,
           createdBy: "local-user",
