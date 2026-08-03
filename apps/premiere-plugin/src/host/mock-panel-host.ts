@@ -10,6 +10,7 @@ export interface MockPanelHostOptions {
 
 export function createMockPanelHost(opts: MockPanelHostOptions = {}) {
   return {
+    isMock: true,
     project: opts.project === null ? null : (opts.project || { name: 'Film.prproj' }),
     tracked: opts.tracked ?? true,
     companionConnected: opts.companionConnected ?? true,

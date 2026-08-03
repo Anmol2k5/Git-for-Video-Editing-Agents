@@ -48,4 +48,16 @@ describe("Premiere panel", () => {
     expect(screen.getByText("Project file location is unavailable in this Premiere version.")).toBeInTheDocument();
     expect(screen.getByText("Could not inspect clip-level changes in this Premiere version")).toBeInTheDocument();
   });
+
+  it("displays DEMO DATA banner when mock host is active", async () => {
+    render(<App host={createMockPanelHost({ tracked: true })} />);
+    expect(await screen.findByText("DEMO DATA (MOCK MODE)")).toBeInTheDocument();
+  });
+
+  it("does not display DEMO DATA banner when real host is active", async () => {
+    const realHost = { project: null, tracked: false, companionConnected: false };
+    render(<App host={realHost} />);
+    expect(screen.queryByText("DEMO DATA (MOCK MODE)")).not.toBeInTheDocument();
+    expect(await screen.findByText("Open a Premiere project to start protecting your edits.")).toBeInTheDocument();
+  });
 });
