@@ -4,11 +4,13 @@ import {
   GitBranch, CloudUpload, Key, Shield, AlertTriangle, CheckCircle,
   HelpCircle, Eye, EyeOff, FolderOpen, Play
 } from 'lucide-react';
-import { companionClient as client, ProjectVersion, CompanionStatus } from './engine';
+import { companionClient as client, ProjectVersion, CompanionStatus, COMPANION_PORT } from './engine';
 import type { PremiereProjectManifest } from '@editvcs/shared-types';
 
 import { getErrorMessage } from './utils';
 import { timelineStateSchema, type TimelineState } from './schemas';
+import { useRestoreFlow } from './hooks/useRestoreFlow';
+import { useDiff } from './hooks/useDiff';
 
 type SyncTargetType = 'local' | 'github';
 type ActivityEntry = { id: number; message: string; time: string };
@@ -77,24 +79,6 @@ function App() {
   const [pairingTimeLeft, setPairingTimeLeft] = useState(0);
   const [companionStatus, setCompanionStatus] = useState<CompanionStatus>("unknown");
 
-  // Restore State
-  const [restoringVersion, setRestoringVersion] = useState<ProjectVersion | null>(null);
-  const [restoreDest, setRestoreDest] = useState("");
-  const [restoreProgress, setRestoreProgress] = useState(false);
-  const [restoreError, setRestoreError] = useState<string | null>(null);
-
-  // Compare Diff State
-  const [diffVersionFrom, setDiffVersionFrom] = useState<ProjectVersion | null>(null);
-  const [diffVersionTo, setDiffVersionTo] = useState<ProjectVersion | null>(null);
-  const [diffResult, setDiffResult] = useState<{
-    confidence: string;
-    summary: string[];
-    groups: Array<{ title: string; items: string[] }>;
-    unsupported: string[];
-  } | null>(null);
-  const [diffLoading, setDiffLoading] = useState(false);
-  const [diffError, setDiffError] = useState<string | null>(null);
-
   const [activity, setActivity] = useState<ActivityEntry[]>([
     { id: 1, message: 'EditVCS panel initialized.', time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) }
   ]);
@@ -106,6 +90,29 @@ function App() {
       time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
     }, ...prev].slice(0, 50));
   }, []);
+
+  // Restore State Hook
+  const {
+    restoringVersion,
+    setRestoringVersion,
+    restoreDest,
+    setRestoreDest,
+    restoreProgress,
+    restoreError,
+    handleOpenRestoreConfirm,
+    handleConfirmRestore
+  } = useRestoreFlow(addActivity);
+
+  // Compare Diff State Hook
+  const {
+    diffVersionFrom,
+    diffVersionTo,
+    diffResult,
+    diffLoading,
+    diffError,
+    handleCompare,
+    clearDiff
+  } = useDiff(currentProjectId);
 
   // Update companion client token when state changes
   useEffect(() => {
@@ -300,11 +307,13 @@ function App() {
   const handleDisconnect = async () => {
     if (sessionToken) {
       try {
-        await fetch(`http://127.0.0.1:8731/sessions/revoke`, {
+        await fetch(`http://127.0.0.1:${COMPANION_PORT}/sessions/revoke`, {
           method: "POST",
           headers: { authorization: `Bearer ${sessionToken}` }
         });
-      } catch {}
+      } catch (err) {
+        console.warn('Session revoke failed:', err);
+      }
     }
     setSessionToken(null);
     setCurrentProjectId(null);
@@ -485,57 +494,6 @@ function App() {
         projectPath
       );
       await executeSnapshotCreation(mockManifest, "verified");
-    }
-  };
-
-  // ── Restore handler ───────────────────────────────────────────────────────
-  const handleOpenRestoreConfirm = (version: ProjectVersion) => {
-    setRestoringVersion(version);
-    setRestoreError(null);
-    // Pre-fill with original parent path
-    const parentPath = projectPath.substring(0, Math.max(projectPath.lastIndexOf('/'), projectPath.lastIndexOf('\\')) + 1);
-    setRestoreDest(parentPath);
-  };
-
-  const handleConfirmRestore = async () => {
-    if (!restoringVersion || !restoreDest) return;
-    setRestoreProgress(true);
-    setRestoreError(null);
-
-    try {
-      const restoredPath = await client.restore(restoringVersion, restoreDest);
-      if (!restoredPath) {
-        setRestoreError("Restore failed. Verify destination folder is writable and folder path is correct.");
-      } else {
-        addActivity(`Restore copy created: ${restoredPath.split(/[\\/]/).pop()}`);
-        setRestoringVersion(null);
-      }
-    } catch (err: unknown) {
-      setRestoreError(getErrorMessage(err));
-    } finally {
-      setRestoreProgress(false);
-    }
-  };
-
-  // ── Compare Diff Handler ──────────────────────────────────────────────────
-  const handleCompare = async (from: ProjectVersion, to: ProjectVersion) => {
-    setDiffVersionFrom(from);
-    setDiffVersionTo(to);
-    setDiffLoading(true);
-    setDiffError(null);
-    setDiffResult(null);
-
-    try {
-      const result = await client.getChanges(currentProjectId!, from.id, to.id);
-      if (!result) {
-        setDiffError("Failed to fetch changes comparison.");
-      } else {
-        setDiffResult(result);
-      }
-    } catch (err: unknown) {
-      setDiffError(getErrorMessage(err));
-    } finally {
-      setDiffLoading(false);
     }
   };
 
@@ -748,7 +706,7 @@ function App() {
               <div className="p-3 rounded-lg border border-[var(--color-border)] mb-3 bg-[var(--color-bg-surface)]">
                 <div className="flex items-center justify-between mb-2">
                   <h4 className="text-xs font-semibold">Comparing v{diffVersionFrom.versionNumber} to v{diffVersionTo.versionNumber}</h4>
-                  <button className="text-[10px] text-[var(--color-text-muted)] hover:text-white" onClick={() => { setDiffVersionFrom(null); setDiffVersionTo(null); setDiffResult(null); }}>
+                  <button className="text-[10px] text-[var(--color-text-muted)] hover:text-white" onClick={clearDiff}>
                     Clear
                   </button>
                 </div>
@@ -829,7 +787,7 @@ function App() {
                               )}
                               <button
                                 className="text-[10px] font-semibold px-2 py-1 rounded text-[var(--color-accent)] bg-[var(--color-accent-dim)] hover:bg-[var(--color-accent-glow)]"
-                                onClick={() => handleOpenRestoreConfirm(v)}
+                                onClick={() => handleOpenRestoreConfirm(v, projectPath)}
                               >
                                 Restore as Copy
                               </button>
@@ -860,8 +818,8 @@ function App() {
 
             {/* Experimental banner for developer debugging */}
             {VITE_EXPERIMENTAL_ENABLED && (
-              <div className="p-3 bg-yellow-500/10 border border-yellow-500/20 rounded-lg">
-                <p className="text-[10px] text-yellow-400 font-bold uppercase tracking-wider mb-1">Experimental Features Enabled</p>
+              <div className="p-3 bg-amber-500/10 border border-amber-500/20 rounded-lg">
+                <p className="text-[10px] text-amber-400 font-bold uppercase tracking-wider mb-1">Experimental Features Enabled</p>
                 <div className="flex gap-1">
                   <button className="btn btn-ghost text-[10px] py-1 px-2"><GitBranch size={10} /> New Version</button>
                   <button className="btn btn-ghost text-[10px] py-1 px-2"><CloudUpload size={10} /> Push</button>

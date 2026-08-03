@@ -4,7 +4,7 @@
 // companion service over a localhost HTTP API. The panel never touches the
 // active project file directly, so restore can never overwrite it.
 
-const COMPANION_PORT = 8731;
+export const COMPANION_PORT = 8731;
 
 export type ProjectVersion = {
   id: string;

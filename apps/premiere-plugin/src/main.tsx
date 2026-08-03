@@ -7,9 +7,13 @@ import './styles.css';
 
 async function boot() {
   const productionHost = await createPremierePanelHost();
+  const allowMock = import.meta.env.DEV || import.meta.env.VITE_EDITVCS_ALLOW_MOCK === 'true';
+
   const host = productionHost.project
     ? productionHost
-    : createMockPanelHost({ tracked: true });
+    : allowMock
+    ? createMockPanelHost({ tracked: true })
+    : productionHost;
 
   ReactDOM.createRoot(document.getElementById('root')!).render(
     <React.StrictMode>
