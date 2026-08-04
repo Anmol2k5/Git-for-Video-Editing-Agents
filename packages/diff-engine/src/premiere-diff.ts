@@ -1,16 +1,34 @@
 import type { PremiereProjectManifest } from "@editvcs/shared-types";
-import { ticksToTimecode, type DiffResult } from "./change-groups";
+import { ticksToTimecode, type DiffResult, type DetailedClipChange, type ChangeGroup } from "./change-groups";
 
 export function comparePremiereManifests(before: PremiereProjectManifest, after: PremiereProjectManifest): DiffResult {
+  let hasClipMetadata = false;
+  let missingClipMetadata = false;
+
+  for (const seq of after.sequences) {
+    if (seq.clips) {
+      hasClipMetadata = true;
+    } else {
+      missingClipMetadata = true;
+    }
+  }
+
+  const confidence = hasClipMetadata && !missingClipMetadata
+    ? "exact"
+    : hasClipMetadata
+    ? "high"
+    : "best-effort";
+
   const result: DiffResult = {
+    confidence,
     summary: [],
     groups: [],
     unsupported: []
   };
 
-  const seqGroup = { title: "Sequences", items: [] as string[] };
-  const vidGroup = { title: "Video timeline", items: [] as string[] };
-  const audGroup = { title: "Audio timeline", items: [] as string[] };
+  const seqGroup: ChangeGroup = { title: "Sequences", items: [] };
+  const vidGroup: ChangeGroup = { title: "Video timeline", items: [], clipChanges: [] };
+  const audGroup: ChangeGroup = { title: "Audio timeline", items: [], clipChanges: [] };
 
   // 1. Check for removed sequences
   for (const oldSeq of before.sequences) {
@@ -54,23 +72,57 @@ export function comparePremiereManifests(before: PremiereProjectManifest, after:
       const isVideo = newClip.trackType === "video";
       const group = isVideo ? vidGroup : audGroup;
       const clipTypeStr = isVideo ? "clip" : "audio clip";
+      const trackPrefix = isVideo ? "V" : "A";
 
       if (!oldClip) {
         if (isVideo) addedVideoClips++; else addedAudioClips++;
         group.items.push(`Added ${clipTypeStr}: ${newClip.name}`);
+        group.clipChanges?.push({
+          type: "added",
+          clipName: newClip.name,
+          trackType: newClip.trackType,
+          trackIndex: newClip.trackIndex,
+          detail: `Added to ${trackPrefix}${newClip.trackIndex}`
+        });
       } else {
         if (oldClip.trackIndex !== newClip.trackIndex || oldClip.trackType !== newClip.trackType) {
           const trackMsg = `Track changed for ${clipTypeStr}: ${newClip.name} (from track ${oldClip.trackIndex} to ${newClip.trackIndex})`;
           group.items.push(trackMsg);
           result.summary.push(`Track changed for ${clipTypeStr}: ${newClip.name}`);
+          group.clipChanges?.push({
+            type: "track-changed",
+            clipName: newClip.name,
+            trackType: newClip.trackType,
+            trackIndex: newClip.trackIndex,
+            oldTrackIndex: oldClip.trackIndex,
+            detail: `Moved from ${trackPrefix}${oldClip.trackIndex} to ${trackPrefix}${newClip.trackIndex}`
+          });
         } else if (oldClip.inTicks !== newClip.inTicks || oldClip.outTicks !== newClip.outTicks) {
           const msg = `Trimmed ${clipTypeStr}: ${newClip.name}`;
           group.items.push(msg);
           result.summary.push(msg);
+          group.clipChanges?.push({
+            type: "trimmed",
+            clipName: newClip.name,
+            trackType: newClip.trackType,
+            trackIndex: newClip.trackIndex,
+            detail: `Trimmed (In: ${ticksToTimecode(newClip.inTicks)}, Out: ${ticksToTimecode(newClip.outTicks)})`,
+            oldTimecode: ticksToTimecode(oldClip.inTicks),
+            newTimecode: ticksToTimecode(newClip.inTicks)
+          });
         } else if (oldClip.startTicks !== newClip.startTicks || oldClip.endTicks !== newClip.endTicks) {
           const msg = `Moved ${clipTypeStr}: ${newClip.name}`;
           group.items.push(msg);
           result.summary.push(msg);
+          group.clipChanges?.push({
+            type: "moved",
+            clipName: newClip.name,
+            trackType: newClip.trackType,
+            trackIndex: newClip.trackIndex,
+            detail: `Moved on timeline (Start: ${ticksToTimecode(newClip.startTicks)})`,
+            oldTimecode: ticksToTimecode(oldClip.startTicks),
+            newTimecode: ticksToTimecode(newClip.startTicks)
+          });
         }
       }
     }
@@ -81,8 +133,16 @@ export function comparePremiereManifests(before: PremiereProjectManifest, after:
         const isVideo = oldClip.trackType === "video";
         const group = isVideo ? vidGroup : audGroup;
         const clipTypeStr = isVideo ? "clip" : "audio clip";
+        const trackPrefix = isVideo ? "V" : "A";
         if (isVideo) removedVideoClips++; else removedAudioClips++;
         group.items.push(`Removed ${clipTypeStr}: ${oldClip.name}`);
+        group.clipChanges?.push({
+          type: "removed",
+          clipName: oldClip.name,
+          trackType: oldClip.trackType,
+          trackIndex: oldClip.trackIndex,
+          detail: `Removed from ${trackPrefix}${oldClip.trackIndex}`
+        });
       }
     }
 

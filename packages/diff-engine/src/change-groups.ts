@@ -1,9 +1,24 @@
+export type ClipChangeType = "added" | "removed" | "moved" | "trimmed" | "track-changed";
+
+export interface DetailedClipChange {
+  type: ClipChangeType;
+  clipName: string;
+  trackType: "video" | "audio";
+  trackIndex: number;
+  oldTrackIndex?: number;
+  detail: string;
+  oldTimecode?: string;
+  newTimecode?: string;
+}
+
 export interface ChangeGroup {
   title: string;
   items: string[];
+  clipChanges?: DetailedClipChange[];
 }
 
 export interface DiffResult {
+  confidence: "exact" | "high" | "best-effort" | "low";
   summary: string[];
   groups: ChangeGroup[];
   unsupported: string[];

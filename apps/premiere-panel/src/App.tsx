@@ -11,6 +11,7 @@ import { getErrorMessage } from './utils';
 import { timelineStateSchema, type TimelineState } from './schemas';
 import { useRestoreFlow } from './hooks/useRestoreFlow';
 import { useDiff } from './hooks/useDiff';
+import { DiffPanel } from './components/DiffPanel';
 
 type SyncTargetType = 'local' | 'github';
 type ActivityEntry = { id: number; message: string; time: string };
@@ -703,37 +704,14 @@ function App() {
 
             {/* Compare Changes Modal / Panel */}
             {diffVersionFrom && diffVersionTo && (
-              <div className="p-3 rounded-lg border border-[var(--color-border)] mb-3 bg-[var(--color-bg-surface)]">
-                <div className="flex items-center justify-between mb-2">
-                  <h4 className="text-xs font-semibold">Comparing v{diffVersionFrom.versionNumber} to v{diffVersionTo.versionNumber}</h4>
-                  <button className="text-[10px] text-[var(--color-text-muted)] hover:text-white" onClick={clearDiff}>
-                    Clear
-                  </button>
-                </div>
-                {diffLoading ? (
-                  <p className="text-[11px] text-[var(--color-text-secondary)]">Computing differences...</p>
-                ) : diffError ? (
-                  <p className="text-[11px] text-[#f87171]">{diffError}</p>
-                ) : diffResult ? (
-                  <div className="space-y-2">
-                    <p className="text-[10px] font-semibold text-[var(--color-accent)]">
-                      Confidence Level: {diffResult.confidence}
-                    </p>
-                    {diffResult.summary.length > 0 ? (
-                      <ul className="list-disc list-inside text-[11px] text-[var(--color-text-secondary)] space-y-1">
-                        {diffResult.summary.map((s, idx) => (
-                          <li key={idx}>{s}</li>
-                        ))}
-                      </ul>
-                    ) : (
-                      <p className="text-[11px] text-[var(--color-text-muted)]">No changes detected between these manifests.</p>
-                    )}
-                    {diffResult.unsupported.map((u, idx) => (
-                      <p key={idx} className="text-[10px] text-amber-400 font-semibold">{u}</p>
-                    ))}
-                  </div>
-                ) : null}
-              </div>
+              <DiffPanel
+                diffVersionFrom={diffVersionFrom}
+                diffVersionTo={diffVersionTo}
+                diffLoading={diffLoading}
+                diffError={diffError}
+                diffResult={diffResult}
+                onClear={clearDiff}
+              />
             )}
 
             {/* History Rail */}
