@@ -1,4 +1,4 @@
-import type { PremiereProjectManifest } from "./manifests";
+import type { ProjectManifest } from "./hosts";
 import type { ProjectId, SnapshotId, StreamId } from "./brand";
 
 export type SnapshotTrigger = "manual" | "automatic" | "before-restore" | "cloud-pull";
@@ -20,12 +20,12 @@ export interface Snapshot {
 
   projectFile: {
     originalFileName: string;
-    sourceExtension: ".prproj";
+    sourceExtension: ".prproj" | ".aep" | ".aepx";
     sha256: string;
     byteSize: number;
   };
 
-  manifest: PremiereProjectManifest;
+  manifest: ProjectManifest;
   manifestStatus: ManifestStatus;
   manifestReason?: string;
   cloudStatus: CloudStatus;

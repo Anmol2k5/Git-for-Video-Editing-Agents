@@ -4,6 +4,7 @@ import path from "node:path";
 import os from "node:os";
 import { createStreamsService } from "./streams-service";
 import { createStream } from "@editvcs/core";
+import { createId, type ProjectId } from "@editvcs/shared-types";
 
 describe("streams service", () => {
   let dir: string;
@@ -18,10 +19,11 @@ describe("streams service", () => {
 
   it("stores and retrieves streams without merging", async () => {
     const service = createStreamsService(dir);
-    const s1 = createStream("proj_1", "Main edit");
+    const projectId = createId<ProjectId>("proj_1");
+    const s1 = createStream(projectId, "Main edit");
     await service.createStream(s1);
 
-    const streams = await service.getStreams("proj_1");
+    const streams = await service.getStreams(projectId);
     expect(streams).toHaveLength(1);
     expect(streams[0].name).toBe("Main edit");
 

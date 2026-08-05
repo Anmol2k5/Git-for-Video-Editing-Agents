@@ -7,7 +7,16 @@ export type PairingId = Brand<string, "PairingId">;
 
 /**
  * Type-safe way to create a branded ID from a string.
+ * Uses NoInfer to force callers to be explicit about the target type.
  */
-export function createId<T extends string>(id: string): T {
+export function createId<T extends string>(id: NoInfer<string>): T {
   return id as T;
 }
+
+// ─── JSON Serialization Types ────────────────────────────────────────────────
+
+export type JsonPrimitive = string | number | boolean | null;
+export type JsonSerializable =
+  | JsonPrimitive
+  | JsonSerializable[]
+  | { [key: string]: JsonSerializable | undefined };

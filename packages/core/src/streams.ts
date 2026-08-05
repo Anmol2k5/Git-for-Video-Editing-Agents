@@ -1,8 +1,8 @@
-import type { VersionStream } from "@editvcs/shared-types";
+import type { VersionStream, ProjectId, SnapshotId, StreamId } from "@editvcs/shared-types";
 
-export function createStream(projectId: string, name: string, baseSnapshotId?: string): VersionStream {
+export function createStream(projectId: ProjectId, name: string, baseSnapshotId?: SnapshotId): VersionStream {
   return {
-    id: `stream_${name.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "") || "untitled"}_${Date.now()}`,
+    id: `stream_${name.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "") || "untitled"}_${Date.now()}` as StreamId,
     projectId,
     name,
     baseSnapshotId,
@@ -11,7 +11,7 @@ export function createStream(projectId: string, name: string, baseSnapshotId?: s
   };
 }
 
-export function describeStreamRelationship(input: { sameStream: boolean }) {
+export function describeStreamRelationship(input: { sameStream: boolean }): { title: string; body: string } {
   if (input.sameStream) {
     return {
       title: "Same version stream",

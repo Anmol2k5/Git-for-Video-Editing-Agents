@@ -1,45 +1,14 @@
 import { z } from "zod";
+import { clipSchema, sequenceSchema, premiereManifestSchema } from "@editvcs/storage";
+
+export { clipSchema, sequenceSchema, premiereManifestSchema };
 
 export const registerProjectSchema = z.object({
   projectPath: z.string().min(1).max(4096),
 });
 
-export const clipSchema = z.object({
-  stableFingerprint: z.string().min(1),
-  name: z.string(),
-  trackType: z.enum(["video", "audio"]),
-  trackIndex: z.number(),
-  startTicks: z.string().optional(),
-  endTicks: z.string().optional(),
-  inTicks: z.string().optional(),
-  outTicks: z.string().optional(),
-  sourcePathHint: z.string().optional(),
-});
-
-export const sequenceSchema = z.object({
-  id: z.string().optional(),
-  name: z.string(),
-  durationTicks: z.string().optional(),
-  videoTrackCount: z.number().optional(),
-  audioTrackCount: z.number().optional(),
-  clips: z.array(clipSchema).optional(),
-});
-
-export const premiereManifestSchema = z.object({
-  projectName: z.string(),
-  projectPathHint: z.string(),
-  capturedAt: z.string(),
-  appVersion: z.string().optional(),
-  sequences: z.array(sequenceSchema),
-  projectItems: z.array(z.object({
-    name: z.string(),
-    type: z.string().optional(),
-    sourcePathHint: z.string().optional()
-  })).optional()
-});
-
 export const createSnapshotSchema = z.object({
-  projectId: z.string().uuid(),
+  projectId: z.string().min(1),
   label: z.string().trim().min(1).max(200),
   trigger: z.enum(["manual", "automatic"]).default("manual"),
   manifest: premiereManifestSchema.nullable().optional(),
@@ -50,7 +19,7 @@ export const createSnapshotSchema = z.object({
 });
 
 export const restoreCopySchema = z.object({
-  projectId: z.string().uuid(),
+  projectId: z.string().min(1),
   snapshotId: z.string().min(1),
   destinationDirectory: z.string().min(1).max(4096),
 });

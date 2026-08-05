@@ -1,8 +1,10 @@
+import type { ProjectId, SnapshotId, StreamId } from "./brand";
+
 export interface VersionStream {
-  id: string;
-  projectId: string;
+  id: StreamId;
+  projectId: ProjectId;
   name: string;
   createdAt: string;
-  baseSnapshotId?: string;
-  currentSnapshotId?: string;
+  baseSnapshotId?: SnapshotId;
+  currentSnapshotId?: SnapshotId;
 }

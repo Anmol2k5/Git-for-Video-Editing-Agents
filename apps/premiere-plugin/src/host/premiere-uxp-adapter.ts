@@ -53,7 +53,11 @@ const unavailableCapabilities: PremiereCapabilities = {
   sequenceInventoryRead: false,
   trackClipRead: false,
   mediaReferenceRead: false,
-  saveEventHooks: false
+  saveEventHooks: false,
+  compositionInventoryRead: false,
+  layerRead: false,
+  effectRead: false,
+  expressionRead: false
 };
 
 export function createPremiereUxpAdapter(options: PremiereUxpAdapterOptions = {}): HostAdapter {
@@ -91,7 +95,11 @@ export function createPremiereUxpAdapter(options: PremiereUxpAdapterOptions = {}
         sequenceInventoryRead: typeof project.getSequences === "function",
         trackClipRead: true,
         mediaReferenceRead: true,
-        saveEventHooks: false
+        saveEventHooks: false,
+        compositionInventoryRead: false,
+        layerRead: false,
+        effectRead: false,
+        expressionRead: false
       };
     },
 
@@ -117,6 +125,7 @@ export function createPremiereUxpAdapter(options: PremiereUxpAdapterOptions = {}
       const project = await getActiveProject();
       if (!project) {
         return {
+          host: "premiere",
           projectName: "No Premiere project",
           projectPathHint: "No active project",
           capturedAt: new Date().toISOString(),
@@ -126,6 +135,7 @@ export function createPremiereUxpAdapter(options: PremiereUxpAdapterOptions = {}
 
       const sequences = await readSequences(project);
       return {
+        host: "premiere",
         projectName: project.name ?? basename(project.path ?? "Premiere project"),
         projectPathHint: project.path ?? project.name ?? "Unsaved Premiere project",
         capturedAt: new Date().toISOString(),

@@ -22,6 +22,7 @@ export const sequenceSchema = z.object({
 });
 
 export const premiereManifestSchema = z.object({
+  host: z.literal("premiere").optional().default("premiere"),
   projectName: z.string(),
   projectPathHint: z.string(),
   capturedAt: z.string(),
@@ -37,7 +38,7 @@ export const premiereManifestSchema = z.object({
 export const snapshotSchema = z.object({
   schemaVersion: z.literal(1),
   id: z.string().min(1),
-  projectId: z.string().uuid(),
+  projectId: z.string().min(1),
   parentSnapshotId: z.string().optional(),
   streamId: z.string().min(1),
   sequenceNumber: z.number(),
@@ -48,7 +49,7 @@ export const snapshotSchema = z.object({
   note: z.string().optional(),
   projectFile: z.object({
     originalFileName: z.string(),
-    sourceExtension: z.literal(".prproj"),
+    sourceExtension: z.enum([".prproj", ".aep", ".aepx"]),
     sha256: z.string().length(64),
     byteSize: z.number()
   }),

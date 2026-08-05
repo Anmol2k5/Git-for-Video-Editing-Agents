@@ -1,4 +1,5 @@
 export interface PremiereProjectManifest {
+  host: "premiere";
   projectName: string;
   projectPathHint: string;
   capturedAt: string;
@@ -29,6 +30,7 @@ export interface PremiereProjectManifest {
 }
 
 export interface AfterEffectsProjectManifest {
+  host: "after-effects";
   projectName: string;
   projectPathHint: string;
   capturedAt: string;

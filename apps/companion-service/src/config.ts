@@ -1,5 +1,6 @@
 import os from "node:os";
 import path from "node:path";
+import { z } from "zod";
 
 export function getDefaultStorageRoot(): string {
   if (process.platform === "win32") {
@@ -32,9 +33,25 @@ function resolveStorageRoot(): string {
   return getDefaultStorageRoot();
 }
 
+const envSchema = z.object({
+  EDITVCS_COMPANION_PORT: z.coerce.number().int().min(1).max(65535).default(8731),
+  EDITVCS_STORAGE_ROOT: z.string().optional(),
+  EDITVCS_LOG_LEVEL: z.enum(["debug", "info", "warn", "error"]).default("info"),
+  EDITVCS_DEV_PANEL_PORT: z.coerce.number().int().min(1).max(65535).default(5173),
+});
+
+const parsedEnv = envSchema.parse(process.env);
+
+export interface CompanionConfig {
+  readonly port: number;
+  readonly storageRoot: string;
+  readonly logLevel: "debug" | "info" | "warn" | "error";
+  readonly devPanelPort: number;
+}
+
 export const config = {
-  port: Number(process.env.EDITVCS_COMPANION_PORT) || 8731,
+  port: parsedEnv.EDITVCS_COMPANION_PORT,
   storageRoot: resolveStorageRoot(),
-  logLevel: process.env.EDITVCS_LOG_LEVEL || "info",
-  devPanelPort: Number(process.env.EDITVCS_DEV_PANEL_PORT) || 5173,
-} as const;
+  logLevel: parsedEnv.EDITVCS_LOG_LEVEL,
+  devPanelPort: parsedEnv.EDITVCS_DEV_PANEL_PORT,
+} satisfies CompanionConfig;

@@ -7,7 +7,7 @@ try {
     bundle: true,
     platform: "node",
     format: "cjs",
-    target: "node18",
+    target: "node20",
     sourcemap: true,
     external: ["fsevents"],
   });

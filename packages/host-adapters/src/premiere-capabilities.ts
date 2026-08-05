@@ -6,5 +6,9 @@ export const defaultPremiereCapabilities: PremiereCapabilities = {
   sequenceInventoryRead: true,
   trackClipRead: false,
   mediaReferenceRead: false,
-  saveEventHooks: false
+  saveEventHooks: false,
+  compositionInventoryRead: false,
+  layerRead: false,
+  effectRead: false,
+  expressionRead: false
 };

@@ -1,12 +1,11 @@
 import { LocalSnapshotRepository, sanitizePathHint, hashFileSha256 } from "@editvcs/storage";
 import { createSnapshotId } from "@editvcs/core";
-import type { Snapshot, PremiereProjectManifest } from "@editvcs/shared-types";
+import type { Snapshot, PremiereProjectManifest, ProjectId, SnapshotId, StreamId } from "@editvcs/shared-types";
 import { createId } from "@editvcs/shared-types";
 import { waitForStableFile } from "./stable-write";
 import path from "node:path";
 import fs from "node:fs/promises";
 
-// Reusable lock manager to serialize snapshot requests per project ID
 class LockManager {
   private locks = new Map<string, Promise<void>>();
 
@@ -35,24 +34,30 @@ const lockManager = new LockManager();
 const MAX_MANIFEST_SIZE_BYTES = 1024 * 1024; // 1MB
 const MAX_CLIPS_COUNT = 500;
 
-export function createSnapshotService(options: { storageRoot: string }) {
+export interface CreateManualSnapshotOpts {
+  projectId: string;
+  projectPath: string;
+  label: string;
+  trigger?: "manual" | "automatic";
+  manifest?: PremiereProjectManifest | null;
+  manifestStatus?: "verified" | "best-effort" | "unavailable";
+  manifestReason?: string;
+}
+
+export interface SnapshotService {
+  createManualSnapshot(opts: CreateManualSnapshotOpts): Promise<{ created: boolean; reason?: string; snapshot?: Snapshot }>;
+  listSnapshots(projectId?: string): Promise<Snapshot[]>;
+  checkHealth(): Promise<{ ok: boolean; error?: string }>;
+}
+
+export function createSnapshotService(options: { storageRoot: string }): SnapshotService {
   const repo = new LocalSnapshotRepository(options.storageRoot);
 
   return {
-    async createManualSnapshot(opts: {
-      projectId: string;
-      projectPath: string;
-      label: string;
-      trigger?: "manual" | "automatic";
-      manifest?: PremiereProjectManifest | null;
-      manifestStatus?: "verified" | "best-effort" | "unavailable";
-      manifestReason?: string;
-    }): Promise<{ created: boolean; reason?: string; snapshot?: Snapshot }> {
+    async createManualSnapshot(opts: CreateManualSnapshotOpts): Promise<{ created: boolean; reason?: string; snapshot?: Snapshot }> {
       return lockManager.runExclusive(opts.projectId, async () => {
-        // 1. Wait for file stability (stability check of 2 checks of mtime and size over timeout)
         await waitForStableFile(opts.projectPath, { intervalMs: 250, stableChecks: 3, timeoutMs: 10000 });
 
-        // 2. Copy source file to a temporary file, with stat comparisons before and after
         const tempPath = await repo.createTempObjectPath();
         let attempts = 0;
         let copySuccess = false;
@@ -68,7 +73,7 @@ export function createSnapshotService(options: { storageRoot: string }) {
               break;
             }
           } catch (err) {
-            // Stat or copy error, count as a failed attempt
+            // Stat or copy error
           }
           attempts++;
           if (attempts < 3) {
@@ -84,10 +89,8 @@ export function createSnapshotService(options: { storageRoot: string }) {
           };
         }
 
-        // 3. Compute hash on the temp copy
         const sha256 = await hashFileSha256(tempPath);
 
-        // 4. Check for duplicate content (only compare against the latest snapshot to allow A -> B -> A)
         const existing = await repo.listSnapshots(opts.projectId);
         const latest = existing[0];
         const sameAsLatest = latest?.projectFile.sha256 === sha256;
@@ -109,7 +112,6 @@ export function createSnapshotService(options: { storageRoot: string }) {
         const tempStat = await fs.stat(tempPath);
         const byteSize = tempStat.size;
 
-        // 5. Verify metadata payload limits
         let finalManifest: PremiereProjectManifest | undefined = undefined;
         let finalStatus = opts.manifestStatus ?? "unavailable";
         let finalReason = opts.manifestReason;
@@ -118,7 +120,6 @@ export function createSnapshotService(options: { storageRoot: string }) {
           try {
             const serialized = JSON.stringify(opts.manifest);
             
-            // Check clip count limit
             let clipCount = 0;
             if (opts.manifest.sequences) {
               for (const seq of opts.manifest.sequences) {
@@ -135,7 +136,7 @@ export function createSnapshotService(options: { storageRoot: string }) {
               finalStatus = "unavailable";
               finalReason = "Timeline clip count exceeded the supported Phase-1 limit.";
             } else {
-              finalManifest = opts.manifest;
+              finalManifest = { ...opts.manifest, host: "premiere" };
               finalStatus = "verified";
             }
           } catch (err) {
@@ -144,19 +145,17 @@ export function createSnapshotService(options: { storageRoot: string }) {
           }
         }
 
-        // 6. Publish the object atomically
         await repo.publishObject(tempPath, sha256);
 
-        // 7. Write the snapshot manifest (referencing only hash, name, size, no absolute objectPath)
         const parsed = path.parse(opts.projectPath);
         const createdAt = new Date().toISOString();
         const snapId = createSnapshotId(opts.projectId, createdAt, sha256);
 
         const snapshot: Snapshot = {
           schemaVersion: 1,
-          id: createId(snapId),
-          projectId: createId(opts.projectId),
-          streamId: createId(`stream_${opts.projectId}`),
+          id: createId<SnapshotId>(snapId),
+          projectId: createId<ProjectId>(opts.projectId),
+          streamId: createId<StreamId>(`stream_${opts.projectId}`),
           sequenceNumber: nextSequenceNumber,
           createdAt,
           createdBy: "local-user",
@@ -169,6 +168,7 @@ export function createSnapshotService(options: { storageRoot: string }) {
             byteSize
           },
           manifest: finalManifest ?? {
+            host: "premiere",
             projectName: parsed.name,
             projectPathHint: sanitizePathHint(opts.projectPath),
             capturedAt: createdAt,

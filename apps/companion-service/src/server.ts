@@ -10,6 +10,7 @@ import { ProjectRegistry } from "./project-registry";
 import { pairingService } from "./pairing";
 import { sessionManager } from "./sessions";
 import { watchProjectFileForSnapshots } from "./file-watcher";
+import { createErrorResponse, type ErrorCode } from "@editvcs/shared-types";
 import {
   registerProjectSchema,
   createSnapshotSchema,
@@ -18,6 +19,10 @@ import {
   refreshSessionSchema,
   changesQuerySchema
 } from "./schemas";
+
+interface FileWatcherInstance {
+  close: () => Promise<void>;
+}
 
 export async function createServer(options: {
   port: number;
@@ -31,7 +36,7 @@ export async function createServer(options: {
   await registry.load();
   
   const snapshotService = createSnapshotService({ storageRoot });
-  const activeWatchers = new Map<string, any>();
+  const activeWatchers = new Map<string, FileWatcherInstance>();
 
   const allowedDevelopmentOrigins = new Set([
     `http://127.0.0.1:${config.devPanelPort}`,
@@ -41,7 +46,6 @@ export async function createServer(options: {
   app.use(
     cors({
       origin(origin, callback) {
-        // Allow no-origin request (empty origin) from packaged CEP
         if (!origin) {
           return callback(null, true);
         }
@@ -76,7 +80,7 @@ export async function createServer(options: {
       res.json(pairInfo);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Rate limit exceeded";
-      res.status(429).json({ error: { code: "RATE_LIMIT_EXCEEDED", message: msg } });
+      res.status(429).json(createErrorResponse("RATE_LIMIT_EXCEEDED", msg));
     }
   });
 
@@ -86,7 +90,7 @@ export async function createServer(options: {
       const session = pairingService.completePairing(pairingId, code);
       res.json(session);
     } catch (err: unknown) {
-      res.status(400).json({ error: { code: "PAIRING_FAILED", message: err instanceof Error ? err.message : "Pairing failed" } });
+      res.status(400).json(createErrorResponse("PAIRING_FAILED", err instanceof Error ? err.message : "Pairing failed"));
     }
   });
 
@@ -95,11 +99,11 @@ export async function createServer(options: {
       const { sessionToken } = refreshSessionSchema.parse(req.body);
       const newSession = sessionManager.refresh(sessionToken);
       if (!newSession) {
-        return res.status(401).json({ error: { code: "UNAUTHORIZED", message: "Invalid session" } });
+        return res.status(401).json(createErrorResponse("UNAUTHORIZED", "Invalid session"));
       }
       res.json(newSession);
     } catch (err) {
-      res.status(400).json({ error: { code: "INVALID_REQUEST", message: "Invalid request" } });
+      res.status(400).json(createErrorResponse("INVALID_REQUEST", "Invalid request"));
     }
   });
 
@@ -121,7 +125,7 @@ export async function createServer(options: {
       res.json({ projectId });
     } catch (error) {
       const message = error instanceof Error ? error.message : "Invalid project path";
-      res.status(400).json({ error: { code: "INVALID_PROJECT_PATH", message } });
+      res.status(400).json(createErrorResponse("INVALID_PROJECT_PATH", message));
     }
   });
 
@@ -129,13 +133,11 @@ export async function createServer(options: {
     try {
       const parsedBody = createSnapshotSchema.parse(req.body);
       
-      // Retrieve the path from registry
       const projectPath = registry.getCanonicalPath(parsedBody.projectId);
       if (!projectPath) {
-        return res.status(404).json({ error: { code: "PROJECT_NOT_FOUND", message: "Project not registered." } });
+        return res.status(404).json(createErrorResponse("PROJECT_NOT_FOUND", "Project not registered."));
       }
 
-      // Revalidate active file path before sensitive operation
       await registry.revalidatePath(parsedBody.projectId);
 
       const result = await snapshotService.createManualSnapshot({
@@ -173,16 +175,15 @@ export async function createServer(options: {
       
       const projectPath = registry.getCanonicalPath(projectId);
       if (!projectPath) {
-        return res.status(404).json({ error: { code: "PROJECT_NOT_FOUND", message: "Project not registered." } });
+        return res.status(404).json(createErrorResponse("PROJECT_NOT_FOUND", "Project not registered."));
       }
 
       const snapshots = await snapshotService.listSnapshots(projectId);
       const snapshot = snapshots.find(s => s.id === snapshotId);
       if (!snapshot) {
-        return res.status(404).json({ error: { code: "SNAPSHOT_NOT_FOUND", message: "Snapshot not found." } });
+        return res.status(404).json(createErrorResponse("SNAPSHOT_NOT_FOUND", "Snapshot not found."));
       }
 
-      // Derive objects location dynamically at runtime
       const objectPath = path.join(storageRoot, "objects", snapshot.projectFile.sha256.slice(0, 2), snapshot.projectFile.sha256);
 
       const restoredPath = await createRestoreCopy({
@@ -209,7 +210,7 @@ export async function createServer(options: {
 
       const projectPath = registry.getCanonicalPath(projectId);
       if (!projectPath) {
-        return res.status(404).json({ error: { code: "PROJECT_NOT_FOUND", message: "Project not registered." } });
+        return res.status(404).json(createErrorResponse("PROJECT_NOT_FOUND", "Project not registered."));
       }
 
       const snapshots = await snapshotService.listSnapshots(projectId);
@@ -217,11 +218,11 @@ export async function createServer(options: {
       const toSnap = snapshots.find(s => s.id === to);
 
       if (!fromSnap || !toSnap) {
-        return res.status(404).json({ error: { code: "SNAPSHOT_NOT_FOUND", message: "Snapshot not found." } });
+        return res.status(404).json(createErrorResponse("SNAPSHOT_NOT_FOUND", "Snapshot not found."));
       }
 
       if (fromSnap.projectId !== projectId || toSnap.projectId !== projectId) {
-        return res.status(400).json({ error: { code: "INVALID_SNAPSHOT", message: "Snapshots must belong to the specified project." } });
+        return res.status(400).json(createErrorResponse("INVALID_SNAPSHOT", "Snapshots must belong to the specified project."));
       }
 
       if (from === to) {
@@ -236,7 +237,7 @@ export async function createServer(options: {
       }
 
       const { comparePremiereManifests } = await import("@editvcs/diff-engine");
-      const diffResult = comparePremiereManifests(fromSnap.manifest, toSnap.manifest);
+      const diffResult = comparePremiereManifests(fromSnap.manifest as any, toSnap.manifest as any);
 
       const confidence = (fromSnap.manifestStatus === "verified" && toSnap.manifestStatus === "verified")
         ? "verified"
@@ -263,7 +264,7 @@ export async function createServer(options: {
       const { projectId } = req.params;
       const projectPath = registry.getCanonicalPath(projectId);
       if (!projectPath) {
-        return res.status(404).json({ error: { code: "PROJECT_NOT_FOUND", message: "Project not registered." } });
+        return res.status(404).json(createErrorResponse("PROJECT_NOT_FOUND", "Project not registered."));
       }
 
       if (activeWatchers.has(projectId)) {
@@ -273,7 +274,7 @@ export async function createServer(options: {
       try {
         await fs.access(projectPath);
       } catch {
-        return res.status(400).json({ error: { code: "FILE_NOT_FOUND", message: "Project file not found on disk." } });
+        return res.status(400).json(createErrorResponse("FILE_NOT_FOUND", "Project file not found on disk."));
       }
 
       const watcher = await watchProjectFileForSnapshots({
@@ -289,7 +290,7 @@ export async function createServer(options: {
         }
       });
 
-      activeWatchers.set(projectId, watcher);
+      activeWatchers.set(projectId, watcher as FileWatcherInstance);
       res.json({ status: "watching" });
     } catch (error) {
       next(error);
@@ -318,35 +319,35 @@ export async function createServer(options: {
 
   // 501 Unfinished fallback endpoints
   app.get("/cloud/status", (req, res) => {
-    res.status(501).json({ error: { code: "NOT_IMPLEMENTED", message: "Cloud backup is not available in Phase 1." } });
+    res.status(501).json(createErrorResponse("NOT_IMPLEMENTED", "Cloud backup is not available in Phase 1."));
   });
 
   app.post("/cloud/backup", (req, res) => {
-    res.status(501).json({ error: { code: "NOT_IMPLEMENTED", message: "Cloud backup is not available in Phase 1." } });
+    res.status(501).json(createErrorResponse("NOT_IMPLEMENTED", "Cloud backup is not available in Phase 1."));
   });
 
   app.post("/sync", (req, res) => {
-    res.status(501).json({ error: { code: "NOT_IMPLEMENTED", message: "Sync is not available in Phase 1." } });
+    res.status(501).json(createErrorResponse("NOT_IMPLEMENTED", "Sync is not available in Phase 1."));
   });
 
   app.get("/sync/config", (req, res) => {
-    res.status(501).json({ error: { code: "NOT_IMPLEMENTED", message: "Sync is not available in Phase 1." } });
+    res.status(501).json(createErrorResponse("NOT_IMPLEMENTED", "Sync is not available in Phase 1."));
   });
 
   app.post("/sync/config", (req, res) => {
-    res.status(501).json({ error: { code: "NOT_IMPLEMENTED", message: "Sync is not available in Phase 1." } });
+    res.status(501).json(createErrorResponse("NOT_IMPLEMENTED", "Sync is not available in Phase 1."));
   });
 
   app.post("/streams", (req, res) => {
-    res.status(501).json({ error: { code: "NOT_IMPLEMENTED", message: "Version streams are not available in Phase 1." } });
+    res.status(501).json(createErrorResponse("NOT_IMPLEMENTED", "Version streams are not available in Phase 1."));
   });
 
   app.get("/streams", (req, res) => {
-    res.status(501).json({ error: { code: "NOT_IMPLEMENTED", message: "Version streams are not available in Phase 1." } });
+    res.status(501).json(createErrorResponse("NOT_IMPLEMENTED", "Version streams are not available in Phase 1."));
   });
 
   app.post("/streams/switch", (req, res) => {
-    res.status(501).json({ error: { code: "NOT_IMPLEMENTED", message: "Version streams are not available in Phase 1." } });
+    res.status(501).json(createErrorResponse("NOT_IMPLEMENTED", "Version streams are not available in Phase 1."));
   });
 
   app.use((error: unknown, req: express.Request, res: express.Response, next: express.NextFunction) => {
@@ -354,10 +355,10 @@ export async function createServer(options: {
       return next(error);
     }
     if (error && typeof error === "object" && "name" in error && error.name === "ZodError") {
-      return res.status(400).json({ error: { code: "VALIDATION_ERROR", message: "Invalid request payload." } });
+      return res.status(400).json(createErrorResponse("VALIDATION_ERROR", "Invalid request payload."));
     }
     const message = error instanceof Error ? error.message : "Unexpected companion service error";
-    res.status(500).json({ error: { code: "INTERNAL_ERROR", message } });
+    res.status(500).json(createErrorResponse("INTERNAL_ERROR", message));
   });
 
   const server = app.listen(options.port, "127.0.0.1");

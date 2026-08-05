@@ -4,15 +4,15 @@ export type HostName = "premiere" | "after-effects";
 
 export interface HostCapabilities {
   projectPath: boolean;
-  activeSequenceRead?: boolean;
-  sequenceInventoryRead?: boolean;
-  trackClipRead?: boolean;
-  mediaReferenceRead?: boolean;
-  saveEventHooks?: boolean;
-  compositionInventoryRead?: boolean;
-  layerRead?: boolean;
-  effectRead?: boolean;
-  expressionRead?: boolean;
+  activeSequenceRead: boolean;
+  sequenceInventoryRead: boolean;
+  trackClipRead: boolean;
+  mediaReferenceRead: boolean;
+  saveEventHooks: boolean;
+  compositionInventoryRead: boolean;
+  layerRead: boolean;
+  effectRead: boolean;
+  expressionRead: boolean;
 }
 
 export interface PremiereCapabilities extends HostCapabilities {

@@ -1,10 +1,22 @@
 import React, { useState } from 'react';
+import type { HostCapabilities } from '@editvcs/shared-types';
 import { FirstRunState } from './components/FirstRunState';
 import { NoProjectState } from './components/NoProjectState';
 import { SavePointDialog } from './components/SavePointDialog';
 import { TrackedProjectState } from './components/TrackedProjectState';
 
-export function App({ host }: { host: any }) {
+export interface PanelHost {
+  isMock?: boolean;
+  project?: any;
+  tracked?: boolean;
+  companionConnected?: boolean;
+  capabilities?: Partial<HostCapabilities> | Record<string, boolean | undefined>;
+  snapshots?: any[];
+  changes?: { summary?: string[]; unsupported?: string[] };
+  streams?: string[];
+}
+
+export function App({ host }: { host: PanelHost }) {
   const [showSaveDialog, setShowSaveDialog] = useState(false);
 
   const demoBanner = host.isMock ? (
