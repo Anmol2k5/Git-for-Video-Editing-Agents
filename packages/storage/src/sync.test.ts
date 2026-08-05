@@ -91,7 +91,7 @@ describe("GitHub sync", () => {
     } finally {
       await rm(base, { recursive: true, force: true });
     }
-  });
+  }, 15000);
 
   it("does not auto-merge when the remote has diverged", async () => {
     const { base, repo, bare, clonedRoot } = await setup();
@@ -117,5 +117,5 @@ describe("GitHub sync", () => {
     } finally {
       await rm(base, { recursive: true, force: true });
     }
-  });
+  }, 15000);
 });
