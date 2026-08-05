@@ -24,6 +24,9 @@
     "package:cep:signed": "node scripts/build-zxp.js --signed",
     "verify:repository": "node scripts/verify-repository.js"
   },
+  "overrides": {
+    "zod": "^3.23.8"
+  },
   "dependencies": {
     "chalk": "^5.3.0",
     "commander": "^12.1.0",
@@ -33,7 +36,8 @@
     "ora": "^8.1.0",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
-    "simple-git": "^3.27.0"
+    "simple-git": "^3.27.0",
+    "zod": "^3.23.8"
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.3.2",

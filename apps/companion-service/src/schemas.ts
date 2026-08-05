@@ -1,7 +1,14 @@
 import { z } from "zod";
-import { clipSchema, sequenceSchema, premiereManifestSchema } from "@editvcs/storage";
+import {
+  clipSchema,
+  sequenceSchema,
+  premiereManifestSchema as _premiereManifestSchema,
+} from "@editvcs/storage";
 
-export { clipSchema, sequenceSchema, premiereManifestSchema };
+export { clipSchema, sequenceSchema, _premiereManifestSchema as premiereManifestSchema };
+
+// Cast to z.ZodTypeAny to avoid cross-package Zod type instance incompatibility
+const premiereManifestSchema = _premiereManifestSchema as unknown as z.ZodTypeAny;
 
 export const registerProjectSchema = z.object({
   projectPath: z.string().min(1).max(4096),
