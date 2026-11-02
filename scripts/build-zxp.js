@@ -1,4 +1,5 @@
 import { execSync, execFileSync } from "child_process";
+import { validateStagedPackage, signPackage } from "./packaging.js";
 import fs from "fs";
 import path from "path";
 
@@ -27,6 +28,8 @@ try {
   console.warn("Could not read version from package.json, defaulting to 1.0.0");
 }
 
+console.log("Building companion and CEP frontend...");
+execSync("npm run editvcs:build:packages && npm --workspace apps/companion-service run build", { stdio: "inherit" });
 console.log("Building premiere-panel CEP frontend...");
 try {
   execSync("npm run build --workspace @editvcs/premiere-panel", { stdio: "inherit" });
@@ -40,7 +43,9 @@ const requiredFiles = [
   path.join(csxsDir, "manifest.xml"),
   path.join(distDir, "index.html"),
   path.join(distDir, "CSInterface.js"),
-  path.join(jsxDir, "hostscript.jsx")
+  path.join(jsxDir, "hostscript.jsx"),
+  path.join(panelDir, "public", "icon.png"),
+  path.join(rootDir, "apps", "companion-service", "dist", "companion.cjs")
 ];
 
 for (const file of requiredFiles) {
@@ -83,7 +88,7 @@ const companionSrc = path.join(rootDir, "apps", "companion-service", "dist");
 if (fs.existsSync(companionSrc)) {
   copyDir(companionSrc, path.join(stagingDir, "server"));
 } else {
-  console.warn("WARNING: companion-service/dist not found. Ensure it was built first.");
+  throw new Error("Companion build output is required for packaging.");
 }
 
 // Copy icons/assets to public staging
@@ -94,13 +99,13 @@ if (fs.existsSync(path.join(publicDir, "icons.svg"))) {
   fs.copyFileSync(path.join(publicDir, "icons.svg"), path.join(stagingDir, "public", "icons.svg"));
 }
 
-// Satisfy manifest.xml reference to icon.png
-const placeholderIconDest = path.join(stagingDir, "public", "icon.png");
-if (fs.existsSync(path.join(publicDir, "favicon.svg"))) {
-  fs.copyFileSync(path.join(publicDir, "favicon.svg"), placeholderIconDest);
-} else {
-  fs.writeFileSync(placeholderIconDest, "placeholder icon content");
-}
+// Copy a real PNG and fail closed when the staged package is incomplete.
+fs.copyFileSync(path.join(publicDir, "icon.png"), path.join(stagingDir, "public", "icon.png"));
+const stagedManifest = path.join(stagingDir, "CSXS", "manifest.xml");
+fs.writeFileSync(stagedManifest, fs.readFileSync(stagedManifest, "utf8")
+  .replace(/(ExtensionBundleVersion=")[^"]+/, `$1${version}`)
+  .replace(/(<Extension Id="com.editvcs.panel" Version=")[^"]+/, `$1${version}`));
+validateStagedPackage(stagingDir);
 
 // Make sure release dir exists
 if (!fs.existsSync(releaseDir)) {
@@ -125,16 +130,10 @@ if (isSigned) {
   try {
     console.log(`Running ZXPSignCmd to create ${outputZxp}...`);
     // Use execFileSync to prevent shell interpolation or printing password in logs
-    execFileSync("ZXPSignCmd", [
-      "-sign",
-      stagingDir,
-      outputZxp,
-      certPath,
-      certPassword
-    ], { stdio: "inherit" });
+    signPackage({ stagingDir, outputZxp, certPath, certPassword });
     console.log(`\nSuccess: Signed package generated at ${outputZxp}`);
   } catch (err) {
-    console.error("ERROR: ZXPSignCmd signature execution failed:", err.message || String(err));
+    console.error("ERROR: Signing failed. Verify the signing tool, certificate and credentials.");
     fs.rmSync(stagingDir, { recursive: true, force: true });
     process.exit(1);
   }
@@ -153,9 +152,10 @@ if (isSigned) {
   const isWin = process.platform === "win32";
   try {
     if (isWin) {
-      execSync(`powershell -Command "Add-Type -AssemblyName System.IO.Compression.FileSystem; [System.IO.Compression.ZipFile]::CreateFromDirectory('${stagingDir}', '${outputZip}')"`);
+      const quotePowerShell = value => "'" + value.replace(/'/g, "''") + "'";
+      execFileSync("powershell", ["-NoProfile", "-NonInteractive", "-Command", `Add-Type -AssemblyName System.IO.Compression.FileSystem; [System.IO.Compression.ZipFile]::CreateFromDirectory(${quotePowerShell(stagingDir)}, ${quotePowerShell(outputZip)})`]);
     } else {
-      execSync(`zip -r "${outputZip}" .`, { cwd: stagingDir });
+      execFileSync("zip", ["-r", outputZip, "."], { cwd: stagingDir });
     }
     console.log(`\nSuccess: Unsigned developer files created:`);
     console.log(`- Folder: ${outputDevFolder}`);

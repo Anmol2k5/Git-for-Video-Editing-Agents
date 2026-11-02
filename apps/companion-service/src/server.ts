@@ -1,4 +1,6 @@
 import express from "express";
+import { createServer as createHttpServer } from "node:http";
+import { storageIdentifierSchema } from "@editvcs/storage";
 import cors from "cors";
 import path from "node:path";
 import fs from "node:fs/promises";
@@ -6,7 +8,7 @@ import { createAuthenticator } from "./auth";
 import { createSnapshotService } from "./snapshot-service";
 import { createRestoreCopy } from "./restore-copy";
 import { config } from "./config";
-import { ProjectRegistry } from "./project-registry";
+import { InvalidProjectPathError, ProjectRegistry } from "./project-registry";
 import { pairingService } from "./pairing";
 import { sessionManager } from "./sessions";
 import { watchProjectFileForSnapshots } from "./file-watcher";
@@ -24,6 +26,8 @@ interface FileWatcherInstance {
   close: () => Promise<void>;
 }
 
+class OriginDeniedError extends Error {}
+
 export async function createServer(options: {
   port: number;
   storageRoot?: string;
@@ -36,7 +40,10 @@ export async function createServer(options: {
   await registry.load();
   
   const snapshotService = createSnapshotService({ storageRoot });
-  const activeWatchers = new Map<string, FileWatcherInstance>();
+  const activeWatchers = new Map<string, Promise<FileWatcherInstance>>();
+  const stoppingWatchers = new Map<string, Promise<void>>();
+  let closing = false;
+  let lastHealthFailure: string | undefined;
 
   const allowedDevelopmentOrigins = new Set([
     `http://127.0.0.1:${config.devPanelPort}`,
@@ -46,16 +53,13 @@ export async function createServer(options: {
   app.use(
     cors({
       origin(origin, callback) {
-        if (!origin) {
+        // CEP loads the extension from disk, producing the literal opaque
+        // Origin "null". Bearer authentication still guards project data.
+        if (!origin || origin === "null") {
           return callback(null, true);
         }
-        try {
-          const parsed = new URL(origin);
-          const allowed = allowedDevelopmentOrigins.has(parsed.origin);
-          callback(allowed ? null : new Error("Origin not allowed"), allowed);
-        } catch {
-          callback(new Error("Invalid origin"));
-        }
+        const allowed = allowedDevelopmentOrigins.has(origin);
+        callback(allowed ? null : new OriginDeniedError(), allowed);
       },
       methods: ["GET", "POST"],
       allowedHeaders: ["authorization", "content-type", "x-editvcs-client"],
@@ -68,8 +72,16 @@ export async function createServer(options: {
   app.get("/health", async (req, res) => {
     const health = await snapshotService.checkHealth();
     if (!health.ok) {
-      return res.status(503).json({ status: "error", error: health.error });
+      // Health probes include a unique ID in their filename. Normalize it for
+      // deduplication while preserving the original detail in the private log.
+      const failure = (health.error ?? "Unknown storage failure").replace(/\.health-[a-f0-9-]+/gi, ".health-<probe>");
+      if (failure !== lastHealthFailure) {
+        lastHealthFailure = failure;
+        console.error("Local storage health check failed:", health.error ?? "Unknown storage failure");
+      }
+      return res.status(503).json({ status: "error", error: "Local storage is unavailable. Check companion logs and storage permissions." });
     }
+    lastHealthFailure = undefined;
     res.json({ status: "ok" });
   });
 
@@ -124,8 +136,10 @@ export async function createServer(options: {
       const projectId = await registry.validateAndRegisterPath(projectPath);
       res.json({ projectId });
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Invalid project path";
-      res.status(400).json(createErrorResponse("INVALID_PROJECT_PATH", message));
+      if (error instanceof InvalidProjectPathError) {
+        return res.status(400).json(createErrorResponse("INVALID_PROJECT_PATH", error.message));
+      }
+      next(error);
     }
   });
 
@@ -162,7 +176,7 @@ export async function createServer(options: {
 
   app.get("/snapshots", async (req, res, next) => {
     try {
-      const projectId = req.query.projectId ? String(req.query.projectId) : undefined;
+      const projectId = req.query.projectId === undefined ? undefined : storageIdentifierSchema.parse(req.query.projectId);
       res.json(await snapshotService.listSnapshots(projectId));
     } catch (error) {
       next(error);
@@ -225,11 +239,19 @@ export async function createServer(options: {
         return res.status(400).json(createErrorResponse("INVALID_SNAPSHOT", "Snapshots must belong to the specified project."));
       }
 
+      if (fromSnap.manifestStatus === "unavailable" || toSnap.manifestStatus === "unavailable") {
+        return res.json({
+          fromSnapshotId: from, toSnapshotId: to, confidence: "metadata-unavailable",
+          summary: ["Timeline metadata is unavailable for one or both save points."],
+          groups: [], unsupported: ["Structural changes cannot be determined from project bytes alone."]
+        });
+      }
+
       if (from === to) {
         return res.json({
           fromSnapshotId: from,
           toSnapshotId: to,
-          confidence: "verified",
+          confidence: fromSnap.manifestStatus === "verified" ? "verified" : "best-effort",
           summary: ["No changes detected (comparing same save point)."],
           groups: [],
           unsupported: []
@@ -237,13 +259,11 @@ export async function createServer(options: {
       }
 
       const { comparePremiereManifests } = await import("@editvcs/diff-engine");
-      const diffResult = comparePremiereManifests(fromSnap.manifest as any, toSnap.manifest as any);
+      const diffResult = comparePremiereManifests(fromSnap.manifest as any, toSnap.manifest as any, { partialCoverage: fromSnap.manifestStatus !== "verified" || toSnap.manifestStatus !== "verified" });
 
       const confidence = (fromSnap.manifestStatus === "verified" && toSnap.manifestStatus === "verified")
         ? "verified"
-        : (fromSnap.manifestStatus === "unavailable" || toSnap.manifestStatus === "unavailable")
-          ? "metadata-unavailable"
-          : "best-effort";
+        : "best-effort";
 
       res.json({
         fromSnapshotId: from,
@@ -267,30 +287,38 @@ export async function createServer(options: {
         return res.status(404).json(createErrorResponse("PROJECT_NOT_FOUND", "Project not registered."));
       }
 
+      const pendingStop = stoppingWatchers.get(projectId);
+      if (pendingStop) await pendingStop;
+      if (closing) return res.status(503).json(createErrorResponse("INTERNAL_ERROR", "Companion is shutting down."));
       if (activeWatchers.has(projectId)) {
+        await activeWatchers.get(projectId);
         return res.json({ status: "watching" });
       }
 
-      try {
+      // Reserve ownership before any filesystem await so concurrent requests
+      // share this startup promise instead of allocating hidden watchers.
+      const watcher = (async () => {
         await fs.access(projectPath);
-      } catch {
-        return res.status(400).json(createErrorResponse("FILE_NOT_FOUND", "Project file not found on disk."));
-      }
-
-      const watcher = await watchProjectFileForSnapshots({
+        return watchProjectFileForSnapshots({
         projectPath,
         debounceMs: 2000,
         onStableChange: async () => {
+          const currentPath = await registry.revalidatePath(projectId);
           await snapshotService.createManualSnapshot({
             projectId,
-            projectPath,
+            projectPath: currentPath,
             label: "Automatic save point",
             trigger: "automatic"
           });
         }
-      });
+        });
+      })();
 
-      activeWatchers.set(projectId, watcher as FileWatcherInstance);
+      activeWatchers.set(projectId, watcher);
+      try { await watcher; } catch (error) {
+        if (activeWatchers.get(projectId) === watcher) activeWatchers.delete(projectId);
+        throw error;
+      }
       res.json({ status: "watching" });
     } catch (error) {
       next(error);
@@ -301,9 +329,17 @@ export async function createServer(options: {
     try {
       const { projectId } = req.params;
       const watcher = activeWatchers.get(projectId);
-      if (watcher) {
-        await watcher.close();
-        activeWatchers.delete(projectId);
+      let stopping = stoppingWatchers.get(projectId);
+      if (!stopping && watcher) {
+        stopping = (async () => {
+          await (await watcher).close();
+          if (activeWatchers.get(projectId) === watcher) activeWatchers.delete(projectId);
+        })();
+        stoppingWatchers.set(projectId, stopping);
+      }
+      if (stopping) {
+        try { await stopping; }
+        finally { if (stoppingWatchers.get(projectId) === stopping) stoppingWatchers.delete(projectId); }
       }
       res.json({ status: "stopped" });
     } catch (error) {
@@ -354,18 +390,44 @@ export async function createServer(options: {
     if (res.headersSent) {
       return next(error);
     }
+    if (error instanceof OriginDeniedError) {
+      return res.status(403).json(createErrorResponse("INVALID_REQUEST", "Request origin is not allowed."));
+    }
     if (error && typeof error === "object" && "name" in error && error.name === "ZodError") {
       return res.status(400).json(createErrorResponse("VALIDATION_ERROR", "Invalid request payload."));
     }
-    const message = error instanceof Error ? error.message : "Unexpected companion service error";
-    res.status(500).json(createErrorResponse("INTERNAL_ERROR", message));
+    const bodyError = error as { type?: string } | null;
+    if (bodyError?.type === "entity.parse.failed") {
+      return res.status(400).json(createErrorResponse("INVALID_REQUEST", "Malformed JSON request."));
+    }
+    if (bodyError?.type === "entity.too.large") {
+      return res.status(413).json(createErrorResponse("INVALID_REQUEST", "Request body is too large."));
+    }
+    console.error("Companion request failed", error);
+    res.status(500).json(createErrorResponse("INTERNAL_ERROR", "Companion operation failed. Check the local companion logs."));
   });
 
-  const server = app.listen(options.port, "127.0.0.1");
-
-  await new Promise<void>((resolve) => {
-    server.once("listening", () => resolve());
+  const server = createHttpServer(app);
+  await new Promise<void>((resolve, reject) => {
+    const onError = (error: Error) => { server.off("listening", onListening); reject(error); };
+    const onListening = () => { server.off("error", onError); resolve(); };
+    server.once("error", onError);
+    server.once("listening", onListening);
+    server.listen(options.port, "127.0.0.1");
   });
 
+  const closeHttp = server.close.bind(server);
+  server.close = (callback?: (error?: Error) => void) => {
+    closing = true;
+    closeHttp(error => {
+      void Promise.allSettled([...activeWatchers.values()].map(async watcher => (await watcher).close()))
+        .then(results => {
+          activeWatchers.clear();
+          const failure = results.find(result => result.status === "rejected");
+          callback?.(error ?? (failure?.status === "rejected" ? failure.reason : undefined));
+        });
+    });
+    return server;
+  };
   return server;
 }

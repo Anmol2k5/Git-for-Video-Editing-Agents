@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import {
   Save, RefreshCw, FileText, GitBranch, CloudUpload
 } from 'lucide-react';
@@ -6,6 +6,7 @@ import { companionClient as client, ProjectVersion, CompanionStatus } from './en
 import type { PremiereProjectManifest } from '@editvcs/shared-types';
 
 import { getErrorMessage } from './utils';
+import { isCepRuntime } from './cep-runtime';
 import { timelineStateSchema, type TimelineState } from './schemas';
 import { useRestoreFlow } from './hooks/useRestoreFlow';
 import { useDiff } from './hooks/useDiff';
@@ -26,7 +27,7 @@ const MAX_MANIFEST_CLIPS = 500;
 
 const evalScriptWithTimeout = (script: string, timeoutMs: number = 4000): Promise<string> => {
   return new Promise((resolve) => {
-    if (window.CSInterface) {
+    if (isCepRuntime()) {
       const csInterface = new window.CSInterface();
       const timeout = setTimeout(() => {
         resolve("ERROR_TIMEOUT");
@@ -45,6 +46,8 @@ const evalScriptWithTimeout = (script: string, timeoutMs: number = 4000): Promis
 function App() {
   const [projectPath, setProjectPath] = useState<string>("");
   const [currentProjectId, setCurrentProjectId] = useState<string | null>(null);
+  const projectGeneration = useRef(0);
+  const projectPathRef = useRef("");
   const [versions, setVersions] = useState<ProjectVersion[]>([]);
   const [isSyncing, setIsSyncing] = useState(false);
   const [saveNote, setSaveNote] = useState("");
@@ -72,6 +75,8 @@ function App() {
     pairingError,
     setPairingError,
     pairingTimeLeft,
+    handleStartPairing,
+    handleCancelPairing,
     handleCompletePairing,
     handleDisconnect
   } = usePairing(addActivity);
@@ -139,6 +144,7 @@ function App() {
       setIsInitializing(false);
     };
     init();
+    return () => { mounted = false; };
   }, [setSessionToken]);
 
   useEffect(() => {
@@ -156,56 +162,57 @@ function App() {
   }, [companionStatus]);
 
   const loadProject = useCallback(async () => {
-    if (!sessionToken) return;
-    
-    if (window.CSInterface) {
-      const res = await evalScriptWithTimeout("$._editvcs.getActiveProjectPath()", 3000);
-      if (res && res !== "" && res !== "evalFiles" && res !== "ERROR_TIMEOUT" && res !== "ERROR_NO_CEP") {
-        setProjectPath(res);
-        try {
-          const registeredId = await client.registerProject(res);
-          if (registeredId) {
-            setCurrentProjectId(registeredId);
-            setVersions(await client.listSnapshots(registeredId));
-          } else {
-            addActivity("Error: Failed to register project in companion registry.");
-          }
-        } catch (err: unknown) {
-          addActivity(`Error: Project registration failed: ${getErrorMessage(err)}`);
-        }
-      } else {
-        setProjectPath("");
-        setCurrentProjectId(null);
-        setVersions([]);
-      }
-    } else {
-      setProjectPath("E:/Work/Film.prproj");
-      const registeredId = await client.registerProject("E:/Work/Film.prproj");
-      if (registeredId) {
-        setCurrentProjectId(registeredId);
-        setVersions(await client.listSnapshots(registeredId));
-      }
+    const generation = ++projectGeneration.current;
+    setCurrentProjectId(null);
+    setVersions([]);
+    clearDiff();
+    setRestoringVersion(null);
+    if (!sessionToken || !isCepRuntime()) {
+      projectPathRef.current = "";
+      setProjectPath("");
+      return;
     }
+    const res = await evalScriptWithTimeout("$._editvcs.getActiveProjectPath()", 3000);
+    if (generation !== projectGeneration.current) return;
+    if (!res || res.startsWith("ERROR_") || res === "EvalScript error." || res === "evalFiles") {
+      projectPathRef.current = "";
+      setProjectPath("");
+      return;
+    }
+    projectPathRef.current = res;
+    setProjectPath(res);
+    try {
+      const registeredId = await client.registerProject(res);
+      if (generation !== projectGeneration.current) return;
+      if (!registeredId) {
+        addActivity("Error: Failed to register project. Save points are disabled until registration succeeds.");
+        return;
+      }
+      const history = await client.listSnapshots(registeredId);
+      if (generation !== projectGeneration.current) return;
+      setCurrentProjectId(registeredId);
+      setVersions(history);
+    } catch (error) {
+      if (generation === projectGeneration.current) addActivity(`Error: Project registration failed: ${getErrorMessage(error)}`);
+    }
+  // clearDiff only updates state and does not depend on the selected project.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionToken, addActivity]);
 
   useEffect(() => {
-    if (sessionToken) {
-      loadProject();
-      const interval = setInterval(async () => {
-        if (window.CSInterface) {
-          const res = await evalScriptWithTimeout("$._editvcs.getActiveProjectPath()", 3000);
-          if (res && res !== "" && res !== "evalFiles" && res !== "ERROR_TIMEOUT" && res !== "ERROR_NO_CEP" && res !== projectPath) {
-            loadProject();
-          }
-        }
-      }, 5000);
-      return () => clearInterval(interval);
-    }
-  }, [loadProject, projectPath, sessionToken]);
+    void loadProject();
+    if (!sessionToken) return;
+    const interval = setInterval(async () => {
+      if (!isCepRuntime()) return;
+      const res = await evalScriptWithTimeout("$._editvcs.getActiveProjectPath()", 3000);
+      if (res !== projectPathRef.current) void loadProject();
+    }, 5000);
+    return () => { clearInterval(interval); projectGeneration.current++; };
+  }, [loadProject, sessionToken]);
 
   const getTimelineStatePromise = (): Promise<TimelineState> => {
     return new Promise((resolve) => {
-      if (window.CSInterface) {
+      if (isCepRuntime()) {
         const csInterface = new window.CSInterface();
         const timeout = setTimeout(() => {
           resolve({ error: "TIMEOUT", reason: "ExtendScript metadata collection timed out." });
@@ -226,19 +233,7 @@ function App() {
           }
         });
       } else {
-        resolve({
-          projectName: "Film.prproj",
-          sequenceName: "Main Edit",
-          framerate: 24,
-          videoTracks: [
-            {
-              id: "v1",
-              name: "Video 1",
-              clips: [{ id: "clip1", name: "Footage_01.mov", start: 0, end: 10, inPoint: 0, outPoint: 10, duration: 10 }]
-            }
-          ],
-          audioTracks: []
-        });
+        resolve({ error: "NO_CEP", reason: "Premiere host is unavailable." });
       }
     });
   };
@@ -290,6 +285,7 @@ function App() {
       }
 
       sequences.push({
+        id: timelineData.sequenceId,
         name: timelineData.sequenceName || "Active Sequence",
         clips: clipsList
       });
@@ -306,12 +302,29 @@ function App() {
 
   const handleSavePoint = async () => {
     if (!projectPath || !currentProjectId) return;
+    const generation = projectGeneration.current;
     setIsSyncing(true);
     addActivity("Saving Premiere project file...");
+    const hostMatches = async () => {
+      if (!isCepRuntime()) return false;
+      const activePath = await evalScriptWithTimeout("$._editvcs.getActiveProjectPath()", 3000);
+      return generation === projectGeneration.current && activePath === projectPath;
+    };
+    if (!await hostMatches()) {
+      setIsSyncing(false);
+      addActivity("Active project changed. Refreshing project before creating a save point.");
+      await loadProject();
+      return;
+    }
 
     const executeSnapshotCreation = async (manifestObj: PremiereProjectManifest | null, statusStr: string, reasonStr?: string) => {
       addActivity("Stable project file verification...");
       try {
+        if (!await hostMatches()) {
+          addActivity("Active project changed during capture. Save point cancelled.");
+          await loadProject();
+          return;
+        }
         const response = await client.createSnapshot(
           currentProjectId,
           "manual",
@@ -321,10 +334,12 @@ function App() {
           reasonStr
         );
 
+        if (generation !== projectGeneration.current) return;
         if (response.created) {
           addActivity(`Success: Save Point created: "${saveNote || 'Manual save point'}"`);
           setSaveNote("");
-          setVersions(await client.listSnapshots(currentProjectId));
+          const history = await client.listSnapshots(currentProjectId);
+          if (generation === projectGeneration.current) setVersions(history);
         } else {
           addActivity(`Save Point skipped: ${response.message || 'No modifications detected.'}`);
         }
@@ -335,7 +350,7 @@ function App() {
       }
     };
 
-    if (window.CSInterface) {
+    if (isCepRuntime()) {
       const res = await evalScriptWithTimeout("$._editvcs.saveActiveProject()", 5000);
       if (res !== "SUCCESS") {
         setIsSyncing(false);
@@ -347,8 +362,8 @@ function App() {
       const timelineData = await getTimelineStatePromise();
 
       const manifest = mapTimelineToManifest(timelineData, projectPath);
-      let status = "verified";
-      let reason = undefined;
+      let status = "best-effort";
+      let reason: string | undefined = "Metadata covers the active sequence only; effects and other sequences are not inspected.";
 
       const totalClips = manifest.sequences.reduce((acc, s) => acc + (s.clips?.length ?? 0), 0);
       const manifestBytes = new TextEncoder().encode(JSON.stringify(manifest)).byteLength;
@@ -364,13 +379,10 @@ function App() {
         reason = "Timeline metadata exceeded the Phase-1 size limit.";
       }
 
-      await executeSnapshotCreation(status === "verified" ? manifest : null, status, reason);
+      await executeSnapshotCreation(status !== "unavailable" ? manifest : null, status, reason);
     } else {
-      const mockManifest = mapTimelineToManifest(
-        { projectName: "Film.prproj", sequenceName: "Main Edit", videoTracks: [] },
-        projectPath
-      );
-      await executeSnapshotCreation(mockManifest, "verified");
+      setIsSyncing(false);
+      addActivity("Open this panel inside Premiere Pro to create save points.");
     }
   };
 
@@ -415,7 +427,7 @@ function App() {
         pairingTimeLeft={pairingTimeLeft}
         onCodeChange={setPairingCode}
         onCompletePairing={handleCompletePairing}
-        onCancelPairing={() => {}}
+        onCancelPairing={handleCancelPairing}
         onStartAuthenticate={async () => {
           setIsInitializing(true);
           setPairingError(null);
@@ -424,8 +436,11 @@ function App() {
           if (success) {
             setCompanionStatus("connected");
             if (client.sessionToken) setSessionToken(client.sessionToken);
+          } else if (await client.isReachable()) {
+            setCompanionStatus("connected");
+            await handleStartPairing();
           } else {
-            setPairingError("Failed to auto-start companion. Is it packaged correctly?");
+            setPairingError("Start the companion with Node.js 20.19+ or 22.12+, then try pairing again.");
           }
           setIsInitializing(false);
         }}
@@ -459,7 +474,7 @@ function App() {
                 <button
                   className="btn btn-primary w-full h-[44px] select-none"
                   onClick={handleSavePoint}
-                  disabled={isSyncing || !saveNote.trim()}
+                  disabled={isSyncing || !currentProjectId || !saveNote.trim()}
                 >
                   {isSyncing ? <RefreshCw size={14} className="animate-spin" /> : <Save size={14} />}
                   {isSyncing ? 'Creating Save Point...' : 'Create Save Point'}
@@ -561,8 +576,8 @@ function App() {
               <div className="p-3 bg-amber-500/10 border border-amber-500/20 rounded-lg">
                 <p className="text-[10px] text-amber-400 font-bold uppercase tracking-wider mb-1">Experimental Features Enabled</p>
                 <div className="flex gap-1">
-                  <button className="btn btn-ghost text-[10px] py-1 px-2"><GitBranch size={10} /> New Version</button>
-                  <button className="btn btn-ghost text-[10px] py-1 px-2"><CloudUpload size={10} /> Push</button>
+                  <button disabled title="Version streams are not available in this release" className="btn btn-ghost text-[10px] py-1 px-2"><GitBranch size={10} /> New Version</button>
+                  <button disabled title="Cloud backup is not available in this release" className="btn btn-ghost text-[10px] py-1 px-2"><CloudUpload size={10} /> Push</button>
                 </div>
               </div>
             )}

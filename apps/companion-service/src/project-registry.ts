@@ -10,6 +10,13 @@ export interface ProjectRecord {
   registeredAt: string;
 }
 
+export class InvalidProjectPathError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "InvalidProjectPathError";
+  }
+}
+
 const projectRecordSchema = z.object({
   projectId: z.string().uuid(),
   canonicalPath: z.string().min(1),
@@ -26,6 +33,7 @@ export function pathComparisonKey(input: string): string {
 export class ProjectRegistry {
   private registry = new Map<string, ProjectRecord>();
   private storageRootPath: string;
+  private pendingRegistration: Promise<void> = Promise.resolve();
 
   constructor(storageRoot: string) {
     this.storageRootPath = storageRoot;
@@ -35,51 +43,54 @@ export class ProjectRegistry {
     try {
       const registryFile = path.join(this.storageRootPath, "registry.json");
       const data = await fs.readFile(registryFile, "utf-8");
-      const records = JSON.parse(data);
-      if (Array.isArray(records)) {
-        for (const record of records) {
-          const parsed = projectRecordSchema.parse(record);
-          this.registry.set(parsed.projectId, parsed);
-        }
+      const records = z.array(projectRecordSchema).parse(JSON.parse(data));
+      const loaded = new Map<string, ProjectRecord>();
+      for (const record of records) {
+        if (loaded.has(record.projectId)) throw new Error("Duplicate project ID");
+        loaded.set(record.projectId, record);
       }
+      this.registry = loaded;
     } catch (err: unknown) {
       if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
-        console.error("Failed to load project registry:", err);
+        throw new Error("Project registry is corrupt or unreadable. Preserve registry.json and recover it before restarting.", { cause: err });
       }
     }
   }
 
-  async save() {
-    await fs.mkdir(this.storageRootPath, { recursive: true });
-    const registryFile = path.join(this.storageRootPath, "registry.json");
-    await writeJsonAtomic(registryFile, Array.from(this.registry.values()));
+  async validateAndRegisterPath(inputPath: string): Promise<string> {
+    const operation = this.pendingRegistration.then(() => this.registerPath(inputPath));
+    this.pendingRegistration = operation.then(() => {}, () => {});
+    return operation;
   }
 
-  async validateAndRegisterPath(inputPath: string): Promise<string> {
+  private async registerPath(inputPath: string): Promise<string> {
     const resolved = path.resolve(inputPath);
     
     let canonical = resolved;
     try {
       canonical = await fs.realpath(resolved);
     } catch (err) {
-      throw new Error(`File does not exist: ${inputPath}`);
+      if (["ENOENT", "ENOTDIR"].includes((err as NodeJS.ErrnoException).code ?? "")) {
+        throw new InvalidProjectPathError("Project file does not exist. Save the project in Premiere and try again.");
+      }
+      throw err;
     }
     
     const stat = await fs.stat(canonical);
     if (!stat.isFile()) {
-      throw new Error("Path is not a regular file.");
+      throw new InvalidProjectPathError("Path is not a regular file.");
     }
     
     if (!canonical.toLowerCase().endsWith(".prproj")) {
-      throw new Error("Path is not a Premiere project file.");
+      throw new InvalidProjectPathError("Path is not a Premiere project file.");
     }
     
     if (canonical.startsWith("\\\\") || canonical.startsWith("//")) {
-      throw new Error("Network paths are not supported in this version.");
+      throw new InvalidProjectPathError("Network paths are not supported in this version.");
     }
     
     if (canonical.startsWith("\\\\.\\") || canonical.startsWith("\\\\?\\")) {
-      throw new Error("Device paths are not supported.");
+      throw new InvalidProjectPathError("Device paths are not supported.");
     }
 
     const newKey = pathComparisonKey(canonical);
@@ -92,13 +103,15 @@ export class ProjectRegistry {
     }
 
     const projectId = randomUUID();
-    this.registry.set(projectId, {
+    const record: ProjectRecord = {
       projectId,
       canonicalPath: canonical,
       registeredAt: new Date().toISOString()
-    });
+    };
 
-    await this.save();
+    await fs.mkdir(this.storageRootPath, { recursive: true });
+    await writeJsonAtomic(path.join(this.storageRootPath, "registry.json"), [...this.registry.values(), record]);
+    this.registry.set(projectId, record);
     return projectId;
   }
 

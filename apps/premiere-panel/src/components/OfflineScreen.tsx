@@ -23,7 +23,7 @@ export function OfflineScreen({ status, onTryAgain }: OfflineScreenProps) {
           <AlertTriangle size={36} className="text-[#f87171] mb-3 animate-pulse" />
           <h3 className="text-sm font-semibold mb-1">Companion Service Unavailable</h3>
           <p className="text-[11px] text-[var(--color-text-secondary)] max-w-[220px] mb-4">
-            Auto-restart failed after multiple attempts. Check companion logs at <span className="font-mono text-[10px]">%APPDATA%/EditVCS/logs/</span>.
+            Start the EditVCS companion using Node.js 20.19+ or 22.12+, then try again. If Node is installed outside PATH, set EDITVCS_NODE_EXECUTABLE to its full executable path before launching Premiere.
           </p>
           <button className="btn btn-primary" onClick={onTryAgain}>
             <RefreshCw size={12} className="mr-1.5" /> Try Again

@@ -51,3 +51,12 @@ jobs:
 
     - name: Run Companion Smoke Test
       run: node scripts/companion-smoke-test.js
+
+    - name: Upload unsigned CEP developer package
+      if: matrix.os == 'ubuntu-latest' && matrix.node-version == '22.x'
+      uses: actions/upload-artifact@v4
+      with:
+        name: EditVCS-CEP-unsigned-${{ github.sha }}
+        path: release/EditVCS-CEP-unsigned.zip
+        if-no-files-found: error
+        retention-days: 14

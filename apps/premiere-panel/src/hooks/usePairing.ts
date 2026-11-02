@@ -60,6 +60,13 @@ export function usePairing(addActivity: (msg: string) => void) {
     }
   }, [addActivity]);
 
+  const handleCancelPairing = useCallback(() => {
+    setPairingId(null);
+    setPairingCode("");
+    setPairingTimeLeft(0);
+    setPairingError(null);
+  }, []);
+
   const handleCompletePairing = useCallback(async () => {
     if (!pairingId || !pairingCode) return;
     setPairingError(null);
@@ -67,6 +74,7 @@ export function usePairing(addActivity: (msg: string) => void) {
     if (success) {
       setSessionToken(client.sessionToken);
       setPairingId(null);
+      setPairingTimeLeft(0);
       addActivity("Pairing completed. Panel successfully authenticated.");
     } else {
       setPairingError("Invalid code or too many invalid attempts.");
@@ -99,6 +107,7 @@ export function usePairing(addActivity: (msg: string) => void) {
     setPairingError,
     pairingTimeLeft,
     handleStartPairing,
+    handleCancelPairing,
     handleCompletePairing,
     handleDisconnect
   };
