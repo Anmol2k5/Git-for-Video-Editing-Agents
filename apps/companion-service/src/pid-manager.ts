@@ -12,8 +12,6 @@ export interface PidFileContents {
 
 const PID_FILENAME = "companion.pid";
 const HEARTBEAT_INTERVAL_MS = 5_000;
-/** If heartbeat is older than this, the process is considered stale/crashed. */
-const STALE_THRESHOLD_MS = 15_000;
 
 export class PidManager {
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
@@ -100,8 +98,8 @@ export class PidManager {
    * Static check: Is a companion already running at the given storageRoot?
    *
    * Returns:
-   * - `{ running: true, pid, port }` if the PID file has a recent heartbeat
-   * - `{ running: false, stale: true, pid }` if the PID file exists but heartbeat is old
+   * - `{ running: true, pid, port }` if the owner PID exists (including EPERM)
+   * - `{ running: false, stale: true, pid }` if the owner PID no longer exists
    * - `{ running: false }` if no PID file exists
    */
   static async isRunning(storageRoot: string): Promise<{
@@ -115,13 +113,19 @@ export class PidManager {
       const raw = await fs.readFile(pidFilePath, "utf-8");
       const contents: PidFileContents = JSON.parse(raw);
 
-      const heartbeatAge = Date.now() - new Date(contents.heartbeat).getTime();
-      if (heartbeatAge < STALE_THRESHOLD_MS) {
-        return { running: true, pid: contents.pid, port: contents.port };
+      if (!Number.isInteger(contents.pid) || contents.pid <= 0) {
+        return { running: false, stale: true };
       }
-
-      // Heartbeat is stale — process probably crashed
-      return { running: false, stale: true, pid: contents.pid };
+      try {
+        process.kill(contents.pid, 0);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "ESRCH") {
+          return { running: false, stale: true, pid: contents.pid };
+        }
+        // A failed liveness probe other than ESRCH does not establish death.
+        // Conservatively keep the owner until it can be diagnosed locally.
+      }
+      return { running: true, pid: contents.pid, port: contents.port };
     } catch {
       // No PID file or unreadable
       return { running: false };

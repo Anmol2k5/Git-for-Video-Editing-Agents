@@ -38,10 +38,11 @@ export function DiffPanel({
 
   const getConfidenceBadge = (confidence: string) => {
     switch (confidence) {
+      case 'verified':
       case 'exact':
         return (
           <span className="inline-flex items-center gap-1 text-[9px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-            <ShieldCheck size={10} /> Exact Match
+            <ShieldCheck size={10} /> Verified Metadata
           </span>
         );
       case 'high':
@@ -50,6 +51,8 @@ export function DiffPanel({
             <ShieldCheck size={10} /> High Confidence
           </span>
         );
+      case 'metadata-unavailable':
+        return <span role="status">Timeline metadata unavailable</span>;
       default:
         return (
           <span className="inline-flex items-center gap-1 text-[9px] font-bold px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-400 border border-amber-500/20">

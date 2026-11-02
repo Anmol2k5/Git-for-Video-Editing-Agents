@@ -1,4 +1,4 @@
-import { LocalSnapshotRepository, sanitizePathHint, hashFileSha256 } from "@editvcs/storage";
+import { LocalSnapshotRepository, sanitizePathHint, hashFileSha256, premiereManifestSchema } from "@editvcs/storage";
 import { createSnapshotId } from "@editvcs/core";
 import type { Snapshot, PremiereProjectManifest, ProjectId, SnapshotId, StreamId } from "@editvcs/shared-types";
 import { createId } from "@editvcs/shared-types";
@@ -113,10 +113,10 @@ export function createSnapshotService(options: { storageRoot: string }): Snapsho
         const byteSize = tempStat.size;
 
         let finalManifest: PremiereProjectManifest | undefined = undefined;
-        let finalStatus = opts.manifestStatus ?? "unavailable";
+        let finalStatus: "verified" | "best-effort" | "unavailable" = "unavailable";
         let finalReason = opts.manifestReason;
 
-        if (opts.manifest) {
+        if (opts.manifest && opts.manifestStatus !== "unavailable") {
           try {
             const serialized = JSON.stringify(opts.manifest);
             
@@ -129,15 +129,24 @@ export function createSnapshotService(options: { storageRoot: string }): Snapsho
               }
             }
 
-            if (serialized.length > MAX_MANIFEST_SIZE_BYTES) {
+            if (Buffer.byteLength(serialized, "utf8") > MAX_MANIFEST_SIZE_BYTES) {
               finalStatus = "unavailable";
               finalReason = "Timeline metadata exceeded the Phase-1 size limit.";
             } else if (clipCount > MAX_CLIPS_COUNT) {
               finalStatus = "unavailable";
               finalReason = "Timeline clip count exceeded the supported Phase-1 limit.";
             } else {
-              finalManifest = { ...opts.manifest, host: "premiere" };
-              finalStatus = "verified";
+              const validated = premiereManifestSchema.parse(opts.manifest);
+              finalManifest = {
+                ...validated,
+                projectPathHint: sanitizePathHint(validated.projectPathHint),
+                sequences: validated.sequences.map(sequence => ({
+                  ...sequence,
+                  clips: sequence.clips?.map(clip => ({ ...clip, sourcePathHint: clip.sourcePathHint ? sanitizePathHint(clip.sourcePathHint) : undefined }))
+                })),
+                projectItems: validated.projectItems?.map(item => ({ ...item, sourcePathHint: item.sourcePathHint ? sanitizePathHint(item.sourcePathHint) : undefined }))
+              };
+              finalStatus = opts.manifestStatus ?? "best-effort";
             }
           } catch (err) {
             finalStatus = "unavailable";

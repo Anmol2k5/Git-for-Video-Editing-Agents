@@ -1,11 +1,11 @@
 import type { PremiereProjectManifest } from "@editvcs/shared-types";
 import { ticksToTimecode, type DiffResult, type DetailedClipChange, type ChangeGroup } from "./change-groups";
 
-export function comparePremiereManifests(before: PremiereProjectManifest, after: PremiereProjectManifest): DiffResult {
+export function comparePremiereManifests(before: PremiereProjectManifest, after: PremiereProjectManifest, options: { partialCoverage?: boolean } = {}): DiffResult {
   let hasClipMetadata = false;
   let missingClipMetadata = false;
 
-  for (const seq of after.sequences) {
+  for (const seq of [...before.sequences, ...after.sequences]) {
     if (seq.clips) {
       hasClipMetadata = true;
     } else {
@@ -30,19 +30,21 @@ export function comparePremiereManifests(before: PremiereProjectManifest, after:
   const vidGroup: ChangeGroup = { title: "Video timeline", items: [], clipChanges: [] };
   const audGroup: ChangeGroup = { title: "Audio timeline", items: [], clipChanges: [] };
 
-  // 1. Check for removed sequences
+  // Match each sequence once. Distinct stable IDs must never be matched by name.
+  const used = new Set<PremiereProjectManifest["sequences"][number]>();
+  const matches = after.sequences.map(newSeq => {
+    const oldSeq = (newSeq.id
+      ? before.sequences.find(s => !used.has(s) && s.id === newSeq.id)
+      : undefined) ?? before.sequences.find(s => !used.has(s) && !(s.id && newSeq.id) && s.name === newSeq.name);
+    if (oldSeq) used.add(oldSeq);
+    return { oldSeq, newSeq };
+  });
   for (const oldSeq of before.sequences) {
-    const newSeq = after.sequences.find(s => (oldSeq.id && s.id === oldSeq.id) || s.name === oldSeq.name);
-    if (!newSeq) {
-      seqGroup.items.push(`Removed sequence: ${oldSeq.name}`);
-    }
+    if (!options.partialCoverage && !used.has(oldSeq)) seqGroup.items.push(`Removed sequence: ${oldSeq.name}`);
   }
-
-  // 2. Compare added and existing sequences
-  for (const newSeq of after.sequences) {
-    const oldSeq = before.sequences.find(s => (newSeq.id && s.id === newSeq.id) || s.name === newSeq.name);
-
+  for (const { oldSeq, newSeq } of matches) {
     if (!oldSeq) {
+      if (options.partialCoverage) continue;
       seqGroup.items.push(`Added sequence: ${newSeq.name}`);
       continue;
     }
@@ -160,7 +162,19 @@ export function comparePremiereManifests(before: PremiereProjectManifest, after:
     }
   }
 
-  if (seqGroup.items.length > 0) result.groups.push(seqGroup);
+  if (options.partialCoverage) {
+    result.confidence = "best-effort";
+    result.unsupported.push("Metadata coverage is partial. Uncaptured sequences and effects cannot be compared.");
+    if (!matches.some(match => match.oldSeq)) {
+      result.summary.push("Captured sequences do not overlap; timeline changes cannot be determined.");
+    } else if (result.summary.length === 0 && seqGroup.items.length === 0 && vidGroup.items.length === 0 && audGroup.items.length === 0) {
+      result.summary.push("No changes detected in shared captured sequences; other sequences were not inspected.");
+    }
+  }
+  if (seqGroup.items.length > 0) {
+    result.groups.push(seqGroup);
+    result.summary.push(...seqGroup.items.filter(item => !result.summary.includes(item)));
+  }
   if (vidGroup.items.length > 0) result.groups.push(vidGroup);
   if (audGroup.items.length > 0) result.groups.push(audGroup);
 

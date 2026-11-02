@@ -1,3 +1,4 @@
+import { isCepRuntime } from './cep-runtime';
 // Panel-side client for the EditVCS companion service.
 //
 // All filesystem work (hashing, storage, restore-as-copy, sync) happens in the
@@ -78,11 +79,21 @@ export class CompanionClient {
     }
   }
 
+  private async fetchJson(path: string, init: RequestInit = {}) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 10_000);
+    try {
+      const response = await fetch(`${this.baseUrl}${path}`, { ...init, signal: controller.signal });
+      const body: unknown = await response.json();
+      return { ok: response.ok, status: response.status, body };
+    } finally { clearTimeout(timer); }
+  }
+
   async startPairing(): Promise<{ pairingId: string; expiresAt: number } | null> {
     try {
-      const res = await fetch(`${this.baseUrl}/pair/start`, { method: "POST" });
+      const res = await this.fetchJson(`/pair/start`, { method: "POST" });
       if (!res.ok) return null;
-      return (await res.json()) as { pairingId: string; expiresAt: number };
+      return res.body as { pairingId: string; expiresAt: number };
     } catch {
       return null;
     }
@@ -90,13 +101,13 @@ export class CompanionClient {
 
   async completePairing(pairingId: string, code: string): Promise<boolean> {
     try {
-      const res = await fetch(`${this.baseUrl}/pair/complete`, {
+      const res = await this.fetchJson(`/pair/complete`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ pairingId, code })
       });
       if (!res.ok) return false;
-      const body = (await res.json()) as { sessionToken: string };
+      const body = res.body as { sessionToken: string };
       this.token = body.sessionToken;
       return true;
     } catch {
@@ -107,7 +118,7 @@ export class CompanionClient {
   private async request<T>(path: string, init: RequestInit = {}): Promise<T | null> {
     if (!this.token) return null;
     try {
-      const res = await fetch(`${this.baseUrl}${path}`, {
+      const res = await this.fetchJson(path, {
         ...init,
         headers: {
           ...(init.headers ?? {}),
@@ -121,14 +132,14 @@ export class CompanionClient {
       }
       if (!res.ok) {
         try {
-          const errBody = await res.json() as any;
+          const errBody = res.body;
           console.error("API REQUEST ERROR:", errBody);
         } catch {
           console.error("API REQUEST FAILED WITH STATUS:", res.status);
         }
         return null;
       }
-      return (await res.json()) as T;
+      return res.body as T;
     } catch (e) {
       console.error("API REQUEST EXCEPTION:", e);
       return null;
@@ -138,8 +149,8 @@ export class CompanionClient {
   /** Used by the UI to show a disconnected state. */
   async isReachable(): Promise<boolean> {
     try {
-      const res = await fetch(`${this.baseUrl}/health`);
-      return res.ok;
+      const res = await this.fetchJson(`/health`);
+      return res.ok && (res.body as { status?: string })?.status === "ok";
     } catch {
       return false;
     }
@@ -230,16 +241,17 @@ export class CompanionClient {
    */
   private async spawnCompanion(): Promise<boolean> {
     // Must be in CEP environment to spawn process
-    if (typeof window === "undefined" || !(window as any).require) return false;
+    if (!isCepRuntime() || !(window as any).require) return false;
 
     try {
       const crypto = (window as any).require("crypto");
       const cp = (window as any).require("child_process");
       const path = (window as any).require("path");
       const fs = (window as any).require("fs");
+      const nodeProcess = (window as any).require("process");
 
       // Generate a secure auto-pairing token
-      const autoPairToken = crypto.randomBytes(32).toString("base64url");
+      const autoPairToken = crypto.randomBytes(32).toString("hex");
 
       // Locate the companion service executable
       let exePath = "";
@@ -250,7 +262,7 @@ export class CompanionClient {
 
         // Fallback for local development monorepo
         if (!fs.existsSync(exePath)) {
-          exePath = path.join(extensionPath, "../../companion-service/dist/companion.cjs");
+          exePath = path.join(extensionPath, "../companion-service/dist/companion.cjs");
         }
       }
 
@@ -260,21 +272,29 @@ export class CompanionClient {
       }
 
       // Spawn the companion server in the background
-      const env = Object.assign({}, process.env, { EDITVCS_AUTO_PAIR_TOKEN: autoPairToken });
-      const child = cp.spawn(process.execPath, [exePath], {
+      const env = Object.assign({}, nodeProcess.env, { EDITVCS_AUTO_PAIR_TOKEN: autoPairToken });
+      // CEP's process.execPath is Adobe/CEF, not a supported standalone Node runtime.
+      const nodeExecutable = nodeProcess.env.EDITVCS_NODE_EXECUTABLE || "node";
+      const child = cp.spawn(nodeExecutable, [exePath], {
         detached: true,
         stdio: "ignore",
         env
       });
 
-      child.unref(); // Allow the parent (Premiere panel) to exit independently of the child
+      let exited = false;
+      child.once("error", () => { exited = true; });
+      child.once("exit", () => { exited = true; });
+      child.unref();
 
-      // Wait for the server to become reachable (poll up to 10 times, 500ms apart)
       for (let i = 0; i < 10; i++) {
         await new Promise(r => setTimeout(r, 500));
+        if (exited) return false;
         if (await this.isReachable()) {
-          this.token = autoPairToken;
-          return true;
+          // Another companion may have won the port race. Prove the spawned
+          // bootstrap token is accepted before treating this client as paired.
+          const auth = await this.fetchJson("/snapshots", { headers: { authorization: `Bearer ${autoPairToken}` } });
+          if (auth.ok) { this.token = autoPairToken; return true; }
+          return false;
         }
       }
       return false;
@@ -337,7 +357,7 @@ export class CompanionClient {
         manifestReason
       })
     });
-    return res ?? { created: false, message: "Companion unreachable." };
+    return res ?? { created: false, message: "Companion request failed. Check the companion connection and retry." };
   }
 
   /** Restore as a new copy beside the active project. Never overwrites it. */

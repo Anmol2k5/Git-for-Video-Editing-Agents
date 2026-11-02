@@ -43,6 +43,9 @@ export function PairingScreen({
           <input
             type="text"
             className="input text-center text-lg font-mono tracking-widest mb-3 h-[44px]"
+            aria-label="Six-digit pairing code"
+            inputMode="numeric"
+            autoComplete="one-time-code"
             maxLength={6}
             placeholder="000000"
             value={pairingCode}

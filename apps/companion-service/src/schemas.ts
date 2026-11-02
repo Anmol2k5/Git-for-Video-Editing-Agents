@@ -2,20 +2,18 @@ import { z } from "zod";
 import {
   clipSchema,
   sequenceSchema,
-  premiereManifestSchema as _premiereManifestSchema,
+  premiereManifestSchema,
+  storageIdentifierSchema,
 } from "@editvcs/storage";
 
-export { clipSchema, sequenceSchema, _premiereManifestSchema as premiereManifestSchema };
-
-// Cast to z.ZodTypeAny to avoid cross-package Zod type instance incompatibility
-const premiereManifestSchema = _premiereManifestSchema as unknown as z.ZodTypeAny;
+export { clipSchema, sequenceSchema, premiereManifestSchema };
 
 export const registerProjectSchema = z.object({
   projectPath: z.string().min(1).max(4096),
 });
 
 export const createSnapshotSchema = z.object({
-  projectId: z.string().min(1),
+  projectId: storageIdentifierSchema,
   label: z.string().trim().min(1).max(200),
   trigger: z.enum(["manual", "automatic"]).default("manual"),
   manifest: premiereManifestSchema.nullable().optional(),
@@ -26,8 +24,8 @@ export const createSnapshotSchema = z.object({
 });
 
 export const restoreCopySchema = z.object({
-  projectId: z.string().min(1),
-  snapshotId: z.string().min(1),
+  projectId: storageIdentifierSchema,
+  snapshotId: storageIdentifierSchema,
   destinationDirectory: z.string().min(1).max(4096),
 });
 

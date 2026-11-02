@@ -63,3 +63,21 @@ npm run test
 - **Authentication**: A local pairing flow with a 6-digit one-time code is required to connect the panel to the companion service.
 
 For a full security audit overview, see `SECURITY.md`.
+
+## Companion runtime and troubleshooting
+
+The panel starts the bundled `server/companion.cjs` using a standalone Node.js executable (`EDITVCS_NODE_EXECUTABLE` or `node` on PATH), not Adobe's embedded executable. Install a supported Node version on the editing workstation before launching Premiere. A GUI-launched Premiere process may have a different PATH from your terminal; use the absolute executable override when needed. The release does not bundle or install Node automatically.
+
+If auto-start fails, start the companion manually in a visible terminal, then choose **Start & Authenticate** in the panel and enter its six-digit code. Local snapshots need no cloud credentials. Configure `EDITVCS_STORAGE_ROOT` to override the platform-specific storage directory, and `EDITVCS_COMPANION_PORT`/`EDITVCS_DEV_PANEL_PORT` for backend development. The shipped CEP panel currently connects to companion port 8731.
+
+A corrupt or unreadable `registry.json` now blocks startup to preserve existing mappings. Keep a copy of that file and recover the valid JSON/permissions before restarting; do not delete it as a routine repair. No automatic registry reconstruction is provided.
+
+Run `npm run editvcs:build:packages && npm run verify` for repository verification, type checks, all builds, tests and packaging regressions. Run `npm run package:cep:unsigned` to build a complete developer package, including the companion bundle and PNG icon. Signed packaging needs ZXPSignCmd plus separately provisioned signing credentials. Windows/macOS clean-machine installation and real Premiere acceptance remain required before a public release.
+
+## Release validation
+
+`npm run verify` also runs the functional smoke-runner regressions against the built companion. To run the actual lifecycle check directly after building, use `node scripts/companion-smoke-test.js`. It creates its own temporary project, storage directory and loopback port, so it can run alongside an existing companion. It verifies process/session ownership, two save points, duplicate-content handling, restore bytes, graceful shutdown and immediate crash recovery. Its temporary data and owned child are cleaned up; it does not terminate other services. These synthetic `.prproj` bytes validate storage mechanics, not Premiere's ability to open a real project.
+
+Health failures keep filesystem details in the companion's local console log and return a generic public response. Repeated identical failures are logged once until the failure changes or a successful probe resets the state. A dead PID owner can restart immediately; an existing owner with an old heartbeat is kept rather than overwritten. Diagnose a stale/reused PID record locally before removing it.
+
+The file-loaded CEP panel uses the opaque Origin `null`; this origin is explicitly supported while bearer authentication continues to protect project data. The packaged extension declares Premiere version range `[23.0,99.9]` (2023+). Native rendering and Node discovery still need acceptance on actual supported editing workstations.

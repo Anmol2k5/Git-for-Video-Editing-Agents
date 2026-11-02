@@ -1,5 +1,8 @@
 import { z } from "zod";
 
+export const storageIdentifierSchema = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.-]{0,255}$/);
+export const sha256Schema = z.string().regex(/^[a-f0-9]{64}$/);
+
 export const clipSchema = z.object({
   stableFingerprint: z.string().min(1),
   name: z.string(),
@@ -37,8 +40,8 @@ export const premiereManifestSchema = z.object({
 
 export const snapshotSchema = z.object({
   schemaVersion: z.literal(1),
-  id: z.string().min(1),
-  projectId: z.string().min(1),
+  id: storageIdentifierSchema,
+  projectId: storageIdentifierSchema,
   parentSnapshotId: z.string().optional(),
   streamId: z.string().min(1),
   sequenceNumber: z.number(),
@@ -50,7 +53,7 @@ export const snapshotSchema = z.object({
   projectFile: z.object({
     originalFileName: z.string(),
     sourceExtension: z.enum([".prproj", ".aep", ".aepx"]),
-    sha256: z.string().length(64),
+    sha256: sha256Schema,
     byteSize: z.number()
   }),
   manifest: premiereManifestSchema,

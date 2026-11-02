@@ -11,10 +11,11 @@ $._editvcs = {
     },
     
     saveActiveProject: function() {
-        if (app && app.project) {
-            app.project.save();
-            return "SUCCESS";
-        }
+        try {
+            if (app && app.project && app.project.path) {
+                return app.project.save() === 0 ? "SUCCESS" : "FAILED";
+            }
+        } catch (error) { return "FAILED"; }
         return "FAILED";
     },
 
@@ -31,7 +32,8 @@ $._editvcs = {
         var state = {
             projectName: app.project.name,
             sequenceName: seq.name,
-            framerate: seq.timebase,
+            sequenceId: seq.sequenceID !== undefined ? String(seq.sequenceID) : undefined,
+            framerate: Number(seq.timebase) > 0 ? 254016000000 / Number(seq.timebase) : undefined,
             videoTracks: [],
             audioTracks: [],
             markers: []

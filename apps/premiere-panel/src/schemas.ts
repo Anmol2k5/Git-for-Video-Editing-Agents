@@ -19,6 +19,7 @@ export const trackSchema = z.object({
 export const timelineStateSchema = z.object({
   projectName: z.string().optional(),
   sequenceName: z.string().optional(),
+  sequenceId: z.string().optional(),
   framerate: z.number().optional(),
   videoTracks: z.array(trackSchema).optional(),
   audioTracks: z.array(trackSchema).optional(),

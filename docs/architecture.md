@@ -29,7 +29,7 @@ The companion service is a lightweight, local-first backend that manages version
 
 * **Single Executable Bundle:** To resolve Node ESM relative imports issues (`ERR_MODULE_NOT_FOUND`), the service is bundled using `esbuild` into a single CommonJS executable located at `dist/companion.cjs`.
 * **Express HTTP Server:** Listens on `127.0.0.1:8731`. It handles requests for pairing, project registration, manual save point creation, restoration, changes diffing, and file watching.
-* **Middlewares & Security:** Enforces strict CORS (only localhost and CEP no-origin headers allowed), rate-limits pairing completions, and restricts access to sensitive routes using JWT-style bearer session tokens.
+* **Middlewares & Security:** Enforces strict CORS (only localhost and CEP no-origin headers allowed), limits pairing starts and invalid completion attempts, and restricts sensitive routes using opaque random bearer session tokens (stored as SHA-256 hashes).
 
 ---
 
@@ -89,7 +89,7 @@ stateDiagram-v2
     UnlockProject --> [*]
 ```
 
-1. **Project Locking:** The companion places incoming snapshot requests in a sequential queue (`LockManager`) per `projectId`. This prevents concurrent writes or race conditions on the same project files.
+1. **Project Locking:** The companion places incoming snapshot requests in a sequential queue (`LockManager`) per `projectId`. This serializes snapshot requests for the same registered project. Registry writes are separately serialized and use unique temporary JSON files.
 2. **File Stability Check:** The companion polls the `.prproj` file stats. It waits until the file size and modified timestamp (`mtime`) remain unchanged across sequential stat polls (with a 2-second stability threshold and up to 3 retries).
 3. **Transaction Copying:** The file is copied to a temporary UUID-named file under `<storage-root>/objects/.tmp/`.
 4. **Hashing & Deduplication:** The temporary copy is hashed (SHA256). If an object with the same hash already exists and passes file size validation, the temporary copy is deleted to save space. Otherwise, it is moved to its content-addressed location: `<storage-root>/objects/<first-two-chars-of-hash>/<hash>`.

@@ -63,6 +63,15 @@ process.on("unhandledRejection", async (reason) => {
 process.on("SIGTERM", () => shutdown("SIGTERM"));
 process.on("SIGINT", () => shutdown("SIGINT"));
 
+// An owned parent (for example the functional release validator) can request
+// graceful shutdown over a private Node IPC channel on every platform.
+// No HTTP endpoint or untrusted web content can send this message.
+process.on("message", (message: unknown) => {
+  if (message && typeof message === "object" && "type" in message && message.type === "editvcs:shutdown") {
+    void shutdown("parent IPC request");
+  }
+});
+
 // Windows: handle Ctrl+C in console
 if (process.platform === "win32") {
   process.on("SIGHUP", () => shutdown("SIGHUP"));

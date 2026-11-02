@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto";
 import { hashFileSha256 } from "./hash-file";
 import type { Snapshot } from "@editvcs/shared-types";
 import { writeJsonAtomic } from "./write-json";
+import { storageIdentifierSchema, sha256Schema, snapshotSchema } from "./schemas";
 
 export class LocalSnapshotRepository {
   constructor(private rootDir: string) {}
@@ -29,9 +30,14 @@ export class LocalSnapshotRepository {
   async checkHealth(): Promise<{ ok: boolean; error?: string }> {
     try {
       await this.init();
-      const testFile = path.join(this.rootDir, `.health-${Date.now()}`);
-      await fs.writeFile(testFile, "ok");
-      await fs.unlink(testFile);
+      const testFile = path.join(this.rootDir, `.health-${randomUUID()}`);
+      const probe = await fs.open(testFile, "wx", 0o600);
+      try {
+        await probe.writeFile("ok");
+      } finally {
+        await probe.close();
+        await fs.unlink(testFile);
+      }
       if (this.healthWarnings.length > 0) {
         return { ok: false, error: `Repository health warnings: ${this.healthWarnings.join("; ")}` };
       }
@@ -48,6 +54,7 @@ export class LocalSnapshotRepository {
   }
 
   async publishObject(tempPath: string, expectedHash: string): Promise<string> {
+    sha256Schema.parse(expectedHash);
     await this.init();
     const prefix = expectedHash.slice(0, 2);
     const objectDir = path.join(this.rootDir, "objects", prefix);
@@ -85,6 +92,7 @@ export class LocalSnapshotRepository {
   }
 
   async saveSnapshot(snapshot: Snapshot) {
+    snapshotSchema.parse(snapshot);
     await this.init();
     const snapDir = path.join(this.rootDir, "projects", snapshot.projectId, "snapshots");
     await fs.mkdir(snapDir, { recursive: true });
@@ -124,6 +132,7 @@ export class LocalSnapshotRepository {
   }
 
   async listSnapshots(projectId?: string): Promise<Snapshot[]> {
+    if (projectId !== undefined) storageIdentifierSchema.parse(projectId);
     await this.init();
     const snapshots: Snapshot[] = [];
 
