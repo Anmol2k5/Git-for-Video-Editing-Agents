@@ -13,7 +13,7 @@
     "lint": "npm run editvcs:lint",
     "verify": "npm run verify:repository && npm run lint && npm run build && npm run test",
     "editvcs:build:packages": "npm --workspace packages/shared-types run build && npm --workspace packages/core run build && npm --workspace packages/diff-engine run build && npm --workspace packages/storage run build && npm --workspace packages/host-adapters run build",
-    "editvcs:test": "npm run test --workspaces --if-present && npm run test:packaging && npm run test:smoke-runner",
+    "editvcs:test": "npm run test --workspaces --if-present && npm run test:packaging && npm run test:smoke-runner && npm run test:cep-compat",
     "editvcs:lint": "npm run lint --workspaces --if-present",
     "editvcs:build": "npm --workspace packages/shared-types run build && npm --workspace packages/core run build && npm --workspace packages/diff-engine run build && npm --workspace packages/storage run build && npm --workspace packages/host-adapters run build && npm --workspace apps/companion-service run build && npm --workspace apps/premiere-panel run build && npm --workspace apps/premiere-plugin run build",
     "editvcs:companion": "npm --workspace apps/companion-service run dev",
@@ -24,7 +24,9 @@
     "package:cep:signed": "node scripts/build-zxp.js --signed",
     "verify:repository": "node scripts/verify-repository.js",
     "test:packaging": "node --test scripts/packaging.test.js",
-    "test:smoke-runner": "node --test scripts/companion-smoke.test.js"
+    "test:smoke-runner": "node --test scripts/companion-smoke.test.js",
+    "test:cep-compat": "node --test scripts/cep-compatibility.test.js",
+    "test:cep-browser": "node --test scripts/cep-browser.test.js"
   },
   "overrides": {
     "zod": "^4.6.6"
@@ -41,7 +43,6 @@
     "zod": "^4.6.6"
   },
   "devDependencies": {
-    "@tailwindcss/vite": "^4.3.2",
     "@types/cors": "^2.8.19",
     "@types/express": "^5.0.6",
     "@types/node": "^22.10.0",
@@ -51,11 +52,12 @@
     "chokidar": "^5.0.0",
     "esbuild": "^0.28.1",
     "lucide-react": "^1.23.0",
-    "tailwindcss": "^4.3.2",
     "typescript": "^5.7.0",
     "vite": "^8.1.1",
     "vitest": "^4.1.10",
-    "zxp-sign-cmd": "^2.0.0"
+    "zxp-sign-cmd": "^2.0.0",
+    "postcss": "^8.5.6",
+    "playwright-core": "^1.56.0"
   },
   "keywords": [
     "version-control",

@@ -47,12 +47,18 @@ function App() {
   const [projectPath, setProjectPath] = useState<string>("");
   const [currentProjectId, setCurrentProjectId] = useState<string | null>(null);
   const projectGeneration = useRef(0);
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => { mounted.current = false; };
+  }, []);
   const projectPathRef = useRef("");
   const [versions, setVersions] = useState<ProjectVersion[]>([]);
   const [isSyncing, setIsSyncing] = useState(false);
   const [saveNote, setSaveNote] = useState("");
   const [companionStatus, setCompanionStatus] = useState<CompanionStatus>("unknown");
   const [isInitializing, setIsInitializing] = useState(true);
+  const [supervisionEnabled, setSupervisionEnabled] = useState(true);
 
   const [activity, setActivity] = useState<ActivityEntry[]>([
     { id: 1, message: 'EditVCS panel initialized.', time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) }
@@ -109,26 +115,6 @@ function App() {
     return () => { client.onStatusChange = undefined; };
   }, []);
 
-  const checkHealthAndRestart = useCallback(async () => {
-    const isOk = await client.isReachable();
-    if (isOk) {
-      if (companionStatus !== "connected") {
-        setCompanionStatus("connected");
-        addActivity("Success: Connected to companion service.");
-      }
-      return;
-    }
-
-    addActivity("Warning: Companion service disconnected. Auto-restarting...");
-    const delay = client.getRestartDelayMs();
-    await new Promise(r => setTimeout(r, delay));
-    const success = await client.ensureRunning();
-    if (success && client.sessionToken) {
-      setSessionToken(client.sessionToken);
-      addActivity("Success: Companion auto-restarted and reconnected.");
-    }
-  }, [companionStatus, addActivity, setSessionToken]);
-
   useEffect(() => {
     let mounted = true;
     const init = async () => {
@@ -148,10 +134,24 @@ function App() {
   }, [setSessionToken]);
 
   useEffect(() => {
-    if (isInitializing) return;
-    const timer = setInterval(checkHealthAndRestart, 5000);
-    return () => clearInterval(timer);
-  }, [checkHealthAndRestart, isInitializing]);
+    // A user disconnect ends supervision until they explicitly authenticate.
+    if (isInitializing || !supervisionEnabled || (!sessionToken && client.status === "pairing-required")) return;
+    let active = true;
+    let timer: ReturnType<typeof setTimeout>;
+    const check = async () => {
+      const success = await client.ensureRunning();
+      if (!active) return;
+      if (success && client.sessionToken && client.sessionToken !== sessionToken) {
+        setSessionToken(client.sessionToken);
+        addActivity("Success: Companion restarted and authenticated.");
+      }
+      if (client.status !== "failed" && (client.sessionToken || client.status !== "pairing-required")) {
+        timer = setTimeout(check, success ? 5000 : client.getRestartDelayMs());
+      }
+    };
+    timer = setTimeout(check, 5000);
+    return () => { active = false; clearTimeout(timer); };
+  }, [isInitializing, supervisionEnabled, sessionToken, setSessionToken, addActivity]);
 
   useEffect(() => {
     if (companionStatus !== "connected") return;
@@ -164,6 +164,7 @@ function App() {
   const loadProject = useCallback(async () => {
     const generation = ++projectGeneration.current;
     setCurrentProjectId(null);
+    setIsSyncing(false);
     setVersions([]);
     clearDiff();
     setRestoringVersion(null);
@@ -200,17 +201,23 @@ function App() {
   }, [sessionToken, addActivity]);
 
   useEffect(() => {
+    if (isInitializing || companionStatus !== "connected") return;
     void loadProject();
     if (!sessionToken) return;
+    let active = true;
+    let polling = false;
     const interval = setInterval(async () => {
-      if (!isCepRuntime()) return;
-      const res = await evalScriptWithTimeout("$._editvcs.getActiveProjectPath()", 3000);
-      if (res !== projectPathRef.current) void loadProject();
+      if (!isCepRuntime() || polling) return;
+      polling = true;
+      try {
+        const res = await evalScriptWithTimeout("$._editvcs.getActiveProjectPath()", 3000);
+        if (active && res !== projectPathRef.current) void loadProject();
+      } finally { polling = false; }
     }, 5000);
-    return () => { clearInterval(interval); projectGeneration.current++; };
-  }, [loadProject, sessionToken]);
+    return () => { active = false; clearInterval(interval); projectGeneration.current++; };
+  }, [loadProject, sessionToken, isInitializing, companionStatus]);
 
-  const getTimelineStatePromise = (): Promise<TimelineState> => {
+  const getTimelineStatePromise = (expectedPath: string): Promise<TimelineState> => {
     return new Promise((resolve) => {
       if (isCepRuntime()) {
         const csInterface = new window.CSInterface();
@@ -218,7 +225,7 @@ function App() {
           resolve({ error: "TIMEOUT", reason: "ExtendScript metadata collection timed out." });
         }, 4000);
 
-        csInterface.evalScript("$._editvcs.getTimelineState()", (res: string) => {
+        csInterface.evalScript(`$._editvcs.getTimelineState(${JSON.stringify(expectedPath)})`, (res: string) => {
           clearTimeout(timeout);
           try {
             if (!res || res.startsWith("evalFiles") || res === "") {
@@ -301,73 +308,42 @@ function App() {
   };
 
   const handleSavePoint = async () => {
-    if (!projectPath || !currentProjectId) return;
+    if (!projectPath || !currentProjectId || isSyncing) return;
     const generation = projectGeneration.current;
+    const isCurrent = () => mounted.current && generation === projectGeneration.current;
+    const hostMatches = async () => {
+      if (!isCurrent() || !isCepRuntime()) return false;
+      const activePath = await evalScriptWithTimeout("$._editvcs.getActiveProjectPath()", 3000);
+      return isCurrent() && activePath === projectPath;
+    };
+    const cancelChangedProject = async () => {
+      if (!isCurrent()) return;
+      addActivity("Active project changed during capture. Save point cancelled.");
+      await loadProject();
+    };
     setIsSyncing(true);
     addActivity("Saving Premiere project file...");
-    const hostMatches = async () => {
-      if (!isCepRuntime()) return false;
-      const activePath = await evalScriptWithTimeout("$._editvcs.getActiveProjectPath()", 3000);
-      return generation === projectGeneration.current && activePath === projectPath;
-    };
-    if (!await hostMatches()) {
-      setIsSyncing(false);
-      addActivity("Active project changed. Refreshing project before creating a save point.");
-      await loadProject();
-      return;
-    }
-
-    const executeSnapshotCreation = async (manifestObj: PremiereProjectManifest | null, statusStr: string, reasonStr?: string) => {
-      addActivity("Stable project file verification...");
-      try {
-        if (!await hostMatches()) {
-          addActivity("Active project changed during capture. Save point cancelled.");
-          await loadProject();
-          return;
-        }
-        const response = await client.createSnapshot(
-          currentProjectId,
-          "manual",
-          saveNote,
-          manifestObj,
-          statusStr,
-          reasonStr
-        );
-
-        if (generation !== projectGeneration.current) return;
-        if (response.created) {
-          addActivity(`Success: Save Point created: "${saveNote || 'Manual save point'}"`);
-          setSaveNote("");
-          const history = await client.listSnapshots(currentProjectId);
-          if (generation === projectGeneration.current) setVersions(history);
-        } else {
-          addActivity(`Save Point skipped: ${response.message || 'No modifications detected.'}`);
-        }
-      } catch (err: unknown) {
-        addActivity(`Error: Save point creation failed: ${getErrorMessage(err)}`);
-      } finally {
-        setIsSyncing(false);
-      }
-    };
-
-    if (isCepRuntime()) {
-      const res = await evalScriptWithTimeout("$._editvcs.saveActiveProject()", 5000);
+    try {
+      if (!await hostMatches()) { await cancelChangedProject(); return; }
+      const res = await evalScriptWithTimeout(`$._editvcs.saveActiveProject(${JSON.stringify(projectPath)})`, 5000);
+      if (!isCurrent()) return;
       if (res !== "SUCCESS") {
-        setIsSyncing(false);
         addActivity("Premiere could not save the project. Save point was not created.");
         return;
       }
-
+      if (!await hostMatches()) { await cancelChangedProject(); return; }
       addActivity("Collecting active sequence timeline metadata...");
-      const timelineData = await getTimelineStatePromise();
-
+      const timelineData = await getTimelineStatePromise(projectPath);
+      if (!isCurrent()) return;
+      if (timelineData.error === "PROJECT_CHANGED" || (timelineData.projectPath && timelineData.projectPath !== projectPath)) {
+        await cancelChangedProject();
+        return;
+      }
       const manifest = mapTimelineToManifest(timelineData, projectPath);
       let status = "best-effort";
       let reason: string | undefined = "Metadata covers the active sequence only; effects and other sequences are not inspected.";
-
-      const totalClips = manifest.sequences.reduce((acc, s) => acc + (s.clips?.length ?? 0), 0);
+      const totalClips = manifest.sequences.reduce((acc, sequence) => acc + (sequence.clips?.length ?? 0), 0);
       const manifestBytes = new TextEncoder().encode(JSON.stringify(manifest)).byteLength;
-
       if (timelineData.error) {
         status = "unavailable";
         reason = timelineData.reason || "ExtendScript collection error.";
@@ -378,11 +354,23 @@ function App() {
         status = "unavailable";
         reason = "Timeline metadata exceeded the Phase-1 size limit.";
       }
-
-      await executeSnapshotCreation(status !== "unavailable" ? manifest : null, status, reason);
-    } else {
-      setIsSyncing(false);
-      addActivity("Open this panel inside Premiere Pro to create save points.");
+      if (!await hostMatches()) { await cancelChangedProject(); return; }
+      addActivity("Stable project file verification...");
+      const response = await client.createSnapshot(currentProjectId, "manual", saveNote,
+        status === "unavailable" ? null : manifest, status, reason);
+      if (!isCurrent()) return;
+      if (response.created) {
+        addActivity(`Success: Save Point created: "${saveNote || 'Manual save point'}"`);
+        setSaveNote(currentNote => currentNote === saveNote ? "" : currentNote);
+        const history = await client.listSnapshots(currentProjectId);
+        if (isCurrent()) setVersions(history);
+      } else {
+        addActivity(`Save Point skipped: ${response.message || 'No modifications detected.'}`);
+      }
+    } catch (error: unknown) {
+      if (isCurrent()) addActivity(`Error: Save point creation failed: ${getErrorMessage(error)}`);
+    } finally {
+      if (isCurrent()) setIsSyncing(false);
     }
   };
 
@@ -410,6 +398,7 @@ function App() {
           client.resetRestartCounter();
           setCompanionStatus("reconnecting");
           const success = await client.ensureRunning();
+          if (!mounted.current) return;
           if (success && client.sessionToken) {
             setSessionToken(client.sessionToken);
           }
@@ -429,20 +418,26 @@ function App() {
         onCompletePairing={handleCompletePairing}
         onCancelPairing={handleCancelPairing}
         onStartAuthenticate={async () => {
+          setSupervisionEnabled(true);
           setIsInitializing(true);
           setPairingError(null);
           client.resetRestartCounter();
           const success = await client.ensureRunning();
+          if (!mounted.current) return;
           if (success) {
             setCompanionStatus("connected");
             if (client.sessionToken) setSessionToken(client.sessionToken);
-          } else if (await client.isReachable()) {
-            setCompanionStatus("connected");
-            await handleStartPairing();
           } else {
-            setPairingError("Start the companion with Node.js 20.19+ or 22.12+, then try pairing again.");
+            const reachable = await client.isReachable();
+            if (!mounted.current) return;
+            if (reachable) {
+              setCompanionStatus("pairing-required");
+              await handleStartPairing();
+            } else {
+              setPairingError("Start the companion with Node.js 20.19+ or 22.12+, then try pairing again.");
+            }
           }
-          setIsInitializing(false);
+          if (mounted.current) setIsInitializing(false);
         }}
       />
     );
@@ -450,7 +445,7 @@ function App() {
 
   return (
     <div className="flex h-screen flex-col" style={{ background: 'var(--color-bg-base)', color: 'var(--color-text-primary)' }}>
-      <Header onDisconnect={handleDisconnect} />
+      <Header onDisconnect={() => { setSupervisionEnabled(false); handleDisconnect(); }} />
       <ProjectBar projectPath={projectPath} projectName={projectName} onRefresh={loadProject} />
 
       <div className="flex-1 overflow-y-auto px-4 py-2 space-y-3">

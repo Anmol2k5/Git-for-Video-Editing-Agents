@@ -117,7 +117,7 @@ it("completes code pairing and opens the registered project", async () => {
 });
 
 it("expires a pending pairing without leaving code entry active", async () => {
-  vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+  vi.useFakeTimers({ toFake: ["setInterval", "clearInterval", "Date"] });
   render(<App />); fireEvent.click(await screen.findByRole("button", { name: "Start & Authenticate" }));
   await screen.findByLabelText("Six-digit pairing code");
   await act(async () => { await vi.advanceTimersByTimeAsync(61000); });

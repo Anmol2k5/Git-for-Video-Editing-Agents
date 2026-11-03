@@ -59,138 +59,145 @@ export function createSnapshotService(options: { storageRoot: string }): Snapsho
         await waitForStableFile(opts.projectPath, { intervalMs: 250, stableChecks: 3, timeoutMs: 10000 });
 
         const tempPath = await repo.createTempObjectPath();
-        let attempts = 0;
-        let copySuccess = false;
+        try {
+          let attempts = 0;
+          let copySuccess = false;
 
-        while (attempts < 3) {
-          try {
-            const before = await fs.stat(opts.projectPath);
-            await fs.copyFile(opts.projectPath, tempPath);
-            const after = await fs.stat(opts.projectPath);
+          while (attempts < 3) {
+            try {
+              const before = await fs.stat(opts.projectPath);
+              await fs.copyFile(opts.projectPath, tempPath);
+              const after = await fs.stat(opts.projectPath);
 
-            if (before.size === after.size && before.mtimeMs === after.mtimeMs) {
-              copySuccess = true;
-              break;
+              if (before.size === after.size && before.mtimeMs === after.mtimeMs) {
+                copySuccess = true;
+                break;
+              }
+            } catch (err) {
+              // Stat or copy error
             }
-          } catch (err) {
-            // Stat or copy error
+            attempts++;
+            if (attempts < 3) {
+              await new Promise(r => setTimeout(r, 500));
+            }
           }
-          attempts++;
-          if (attempts < 3) {
-            await new Promise(r => setTimeout(r, 500));
+
+          if (!copySuccess) {
+            await fs.unlink(tempPath).catch(() => {});
+            return {
+              created: false,
+              reason: "Premiere changed the project while EditVCS was copying it. Please try again."
+            };
           }
-        }
 
-        if (!copySuccess) {
-          await fs.unlink(tempPath).catch(() => {});
-          return {
-            created: false,
-            reason: "Premiere changed the project while EditVCS was copying it. Please try again."
-          };
-        }
+          const sha256 = await hashFileSha256(tempPath);
 
-        const sha256 = await hashFileSha256(tempPath);
+          const existing = await repo.listSnapshots(opts.projectId);
+          if (repo.getHealthWarnings().length > 0) {
+            throw new Error("Snapshot history is unavailable or corrupt. Recover the repository before creating new save points.");
+          }
+          const latest = existing[0];
+          const sameAsLatest = latest?.projectFile.sha256 === sha256;
+          if (sameAsLatest) {
+            await fs.unlink(tempPath).catch(() => {});
+            return {
+              created: false,
+              reason: "No file changes detected since the last save point."
+            };
+          }
 
-        const existing = await repo.listSnapshots(opts.projectId);
-        const latest = existing[0];
-        const sameAsLatest = latest?.projectFile.sha256 === sha256;
-        if (sameAsLatest) {
-          await fs.unlink(tempPath).catch(() => {});
-          return {
-            created: false,
-            reason: "No file changes detected since the last save point."
-          };
-        }
+          const nextSequenceNumber =
+            existing.length === 0
+              ? 1
+              : Math.max(
+                  ...existing.map((snapshot) => snapshot.sequenceNumber ?? 0)
+                ) + 1;
 
-        const nextSequenceNumber =
-          existing.length === 0
-            ? 1
-            : Math.max(
-                ...existing.map((snapshot) => snapshot.sequenceNumber ?? 0)
-              ) + 1;
+          const tempStat = await fs.stat(tempPath);
+          const byteSize = tempStat.size;
 
-        const tempStat = await fs.stat(tempPath);
-        const byteSize = tempStat.size;
+          let finalManifest: PremiereProjectManifest | undefined = undefined;
+          let finalStatus: "verified" | "best-effort" | "unavailable" = "unavailable";
+          let finalReason = opts.manifestReason;
 
-        let finalManifest: PremiereProjectManifest | undefined = undefined;
-        let finalStatus: "verified" | "best-effort" | "unavailable" = "unavailable";
-        let finalReason = opts.manifestReason;
-
-        if (opts.manifest && opts.manifestStatus !== "unavailable") {
-          try {
-            const serialized = JSON.stringify(opts.manifest);
+          if (opts.manifest && opts.manifestStatus !== "unavailable") {
+            try {
+              const serialized = JSON.stringify(opts.manifest);
             
-            let clipCount = 0;
-            if (opts.manifest.sequences) {
-              for (const seq of opts.manifest.sequences) {
-                if (seq.clips) {
-                  clipCount += seq.clips.length;
+              let clipCount = 0;
+              if (opts.manifest.sequences) {
+                for (const seq of opts.manifest.sequences) {
+                  if (seq.clips) {
+                    clipCount += seq.clips.length;
+                  }
                 }
               }
-            }
 
-            if (Buffer.byteLength(serialized, "utf8") > MAX_MANIFEST_SIZE_BYTES) {
+              if (Buffer.byteLength(serialized, "utf8") > MAX_MANIFEST_SIZE_BYTES) {
+                finalStatus = "unavailable";
+                finalReason = "Timeline metadata exceeded the Phase-1 size limit.";
+              } else if (clipCount > MAX_CLIPS_COUNT) {
+                finalStatus = "unavailable";
+                finalReason = "Timeline clip count exceeded the supported Phase-1 limit.";
+              } else {
+                const validated = premiereManifestSchema.parse(opts.manifest);
+                finalManifest = {
+                  ...validated,
+                  projectPathHint: sanitizePathHint(validated.projectPathHint),
+                  sequences: validated.sequences.map(sequence => ({
+                    ...sequence,
+                    clips: sequence.clips?.map(clip => ({ ...clip, sourcePathHint: clip.sourcePathHint ? sanitizePathHint(clip.sourcePathHint) : undefined }))
+                  })),
+                  projectItems: validated.projectItems?.map(item => ({ ...item, sourcePathHint: item.sourcePathHint ? sanitizePathHint(item.sourcePathHint) : undefined }))
+                };
+                finalStatus = opts.manifestStatus ?? "best-effort";
+              }
+            } catch (err) {
               finalStatus = "unavailable";
-              finalReason = "Timeline metadata exceeded the Phase-1 size limit.";
-            } else if (clipCount > MAX_CLIPS_COUNT) {
-              finalStatus = "unavailable";
-              finalReason = "Timeline clip count exceeded the supported Phase-1 limit.";
-            } else {
-              const validated = premiereManifestSchema.parse(opts.manifest);
-              finalManifest = {
-                ...validated,
-                projectPathHint: sanitizePathHint(validated.projectPathHint),
-                sequences: validated.sequences.map(sequence => ({
-                  ...sequence,
-                  clips: sequence.clips?.map(clip => ({ ...clip, sourcePathHint: clip.sourcePathHint ? sanitizePathHint(clip.sourcePathHint) : undefined }))
-                })),
-                projectItems: validated.projectItems?.map(item => ({ ...item, sourcePathHint: item.sourcePathHint ? sanitizePathHint(item.sourcePathHint) : undefined }))
-              };
-              finalStatus = opts.manifestStatus ?? "best-effort";
+              finalReason = "Invalid manifest metadata.";
             }
-          } catch (err) {
-            finalStatus = "unavailable";
-            finalReason = "Invalid manifest metadata.";
           }
+
+          await repo.publishObject(tempPath, sha256);
+
+          const parsed = path.parse(opts.projectPath);
+          const createdAt = new Date().toISOString();
+          const snapId = createSnapshotId(opts.projectId, createdAt, sha256);
+
+          const snapshot: Snapshot = {
+            schemaVersion: 1,
+            id: createId<SnapshotId>(snapId),
+            projectId: createId<ProjectId>(opts.projectId),
+            streamId: createId<StreamId>(`stream_${opts.projectId}`),
+            sequenceNumber: nextSequenceNumber,
+            createdAt,
+            createdBy: "local-user",
+            trigger: opts.trigger ?? "manual",
+            label: opts.label,
+            projectFile: {
+              originalFileName: parsed.base,
+              sourceExtension: ".prproj",
+              sha256,
+              byteSize
+            },
+            manifest: finalManifest ?? {
+              host: "premiere",
+              projectName: parsed.name,
+              projectPathHint: sanitizePathHint(opts.projectPath),
+              capturedAt: createdAt,
+              sequences: []
+            },
+            manifestStatus: finalStatus,
+            manifestReason: finalReason,
+            cloudStatus: "local-only"
+          };
+
+          await repo.saveSnapshot(snapshot);
+
+          return { created: true, snapshot };
+        } finally {
+          await fs.unlink(tempPath).catch(() => {});
         }
-
-        await repo.publishObject(tempPath, sha256);
-
-        const parsed = path.parse(opts.projectPath);
-        const createdAt = new Date().toISOString();
-        const snapId = createSnapshotId(opts.projectId, createdAt, sha256);
-
-        const snapshot: Snapshot = {
-          schemaVersion: 1,
-          id: createId<SnapshotId>(snapId),
-          projectId: createId<ProjectId>(opts.projectId),
-          streamId: createId<StreamId>(`stream_${opts.projectId}`),
-          sequenceNumber: nextSequenceNumber,
-          createdAt,
-          createdBy: "local-user",
-          trigger: opts.trigger ?? "manual",
-          label: opts.label,
-          projectFile: {
-            originalFileName: parsed.base,
-            sourceExtension: ".prproj",
-            sha256,
-            byteSize
-          },
-          manifest: finalManifest ?? {
-            host: "premiere",
-            projectName: parsed.name,
-            projectPathHint: sanitizePathHint(opts.projectPath),
-            capturedAt: createdAt,
-            sequences: []
-          },
-          manifestStatus: finalStatus,
-          manifestReason: finalReason,
-          cloudStatus: "local-only"
-        };
-
-        await repo.saveSnapshot(snapshot);
-
-        return { created: true, snapshot };
       });
     },
 

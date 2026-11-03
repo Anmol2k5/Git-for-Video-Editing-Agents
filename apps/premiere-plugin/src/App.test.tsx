@@ -61,3 +61,41 @@ describe("Premiere panel", () => {
     expect(await screen.findByText("Open a Premiere project to start protecting your edits.")).toBeInTheDocument();
   });
 });
+
+
+describe("UXP prototype controls", () => {
+  it("identifies the prototype and disables starting unwired version history", () => {
+    render(<App host={{ project: { name: "Film.prproj" }, tracked: false }} />);
+
+    expect(screen.getByText(/UXP prototype/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Start version history" })).toBeDisabled();
+    expect(screen.getByText(/Use the Premiere CEP panel/)).toBeInTheDocument();
+  });
+
+  it("keeps save, restore, retry, and stream switching unavailable for non-demo hosts", () => {
+    render(<App host={{
+      project: { name: "Film.prproj" },
+      tracked: true,
+      companionConnected: false,
+      snapshots: [],
+      streams: [],
+      changes: { summary: [], unsupported: [] }
+    }} />);
+
+    expect(screen.getByRole("button", { name: "Create Save Point" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Restore as Copy" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Retry" })).toBeDisabled();
+    expect(screen.getByLabelText("Version stream")).toBeDisabled();
+    expect(screen.getByText(/Companion connection is unavailable/)).toBeInTheDocument();
+  });
+
+  it("labels save dialogs as demo previews and disables their unwired submission", async () => {
+    const user = userEvent.setup();
+    render(<App host={createMockPanelHost()} />);
+    await user.click(screen.getByRole("button", { name: "Create Save Point" }));
+
+    const dialog = screen.getByRole("dialog");
+    expect(dialog).toHaveTextContent(/Demo preview/);
+    expect(dialog.querySelector("button")).toBeDisabled();
+  });
+});

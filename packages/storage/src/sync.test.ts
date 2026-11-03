@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
-import { mkdtemp, mkdir, writeFile, readFile, rm, readdir } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { mkdtemp, mkdir, writeFile, readFile, rm } from "node:fs/promises";
 import { promisify } from "node:util";
 import os from "node:os";
 import path from "node:path";
@@ -9,6 +10,23 @@ import { syncToLocalPath, syncToGitHub } from "./sync";
 const execFileAsync = promisify(execFile);
 const git = async (cwd: string, ...args: string[]) =>
   execFileAsync("git", args, { cwd });
+
+async function currentSnapshot(root: string, id: string, content: string) {
+  const hash = createHash("sha256").update(content).digest("hex");
+  await mkdir(path.join(root, "objects", hash.slice(0, 2)), { recursive: true });
+  await writeFile(path.join(root, "objects", hash.slice(0, 2), hash), content);
+  const snapshots = path.join(root, "projects", "project-a", "snapshots");
+  await mkdir(snapshots, { recursive: true });
+  const bytes = JSON.stringify({
+    schemaVersion: 1, id, projectId: "project-a", streamId: "main", sequenceNumber: 1,
+    createdAt: "2026-01-01T00:00:00.000Z", createdBy: "local-user", trigger: "manual",
+    projectFile: { originalFileName: "Film.prproj", sourceExtension: ".prproj", sha256: hash, byteSize: Buffer.byteLength(content) },
+    manifest: { host: "premiere", projectName: "Film", projectPathHint: ".../Film.prproj", capturedAt: "2026-01-01T00:00:00.000Z", sequences: [] },
+    manifestStatus: "unavailable", cloudStatus: "local-only"
+  });
+  await writeFile(path.join(snapshots, `${id}.json`), bytes);
+  return bytes;
+}
 
 describe("local / NAS sync", () => {
   let local: string;
@@ -23,12 +41,14 @@ describe("local / NAS sync", () => {
   });
 
   afterEach(async () => {
-    await rm(path.dirname(local), { recursive: true, force: true });
+    await rm(path.dirname(path.dirname(local)), { recursive: true, force: true });
   });
 
   it("pushes new snapshots and pulls remote-only snapshots", async () => {
     await writeFile(path.join(local, "manifests", "a.json"), "{}");
-    await writeFile(path.join(local, "objects", "obj-a"), "data-a");
+    const hash = createHash("sha256").update("data-a").digest("hex");
+    await mkdir(path.join(local, "objects", hash.slice(0, 2)));
+    await writeFile(path.join(local, "objects", hash.slice(0, 2), hash), "data-a");
 
     // Remote starts with its own snapshot.
     await mkdir(path.join(remote, "manifests"), { recursive: true });
@@ -38,7 +58,7 @@ describe("local / NAS sync", () => {
     const result = await syncToLocalPath(local, remote);
 
     expect(result.errors).toEqual([]);
-    expect(result.pushed).toBe(2); // a.json + obj-a
+    expect(result.pushed).toBe(2); // Legacy manifest and a valid content-addressed object.
     expect(result.pulled).toBe(1); // b.json
 
     await expect(readFile(path.join(remote, "manifests", "a.json"), "utf8")).resolves.toBe("{}");
@@ -67,7 +87,7 @@ describe("GitHub sync", () => {
     const bare = path.join(base, "bare.git");
     const clonedRoot = path.join(base, "cloned");
     await mkdir(repo, { recursive: true });
-    await writeFile(path.join(repo, "snapshot.json"), "v1");
+    const bytes = await currentSnapshot(repo, "first", "v1");
     await execFileAsync("git", ["init", "-q", repo]);
     // syncToGitHub skips `git init`/`checkout -b main` when .git already exists,
     // so create the main branch here to match what it would otherwise create.
@@ -75,19 +95,19 @@ describe("GitHub sync", () => {
     await execFileAsync("git", ["-C", repo, "config", "user.email", "test@editvcs.local"]);
     await execFileAsync("git", ["-C", repo, "config", "user.name", "EditVCS Test"]);
     await execFileAsync("git", ["init", "-q", "--bare", "-b", "main", bare]);
-    return { base, repo, bare, clonedRoot };
+    return { base, repo, bare, clonedRoot, bytes };
   }
 
   it("pushes the local repository to a remote", async () => {
-    const { base, repo, bare, clonedRoot } = await setup();
+    const { base, repo, bare, clonedRoot, bytes } = await setup();
     try {
       const result = await syncToGitHub(repo, bare);
       expect(result.errors).toEqual([]);
       expect(result.pushed).toBe(1);
 
-      // The remote should now contain the snapshot file (the .editvcs dir is the repo root).
+      // The remote contains only the current snapshot layout and its verified object.
       await execFileAsync("git", ["clone", "-q", bare, clonedRoot]);
-      await expect(readFile(path.join(clonedRoot, "snapshot.json"), "utf8")).resolves.toBe("v1");
+      await expect(readFile(path.join(clonedRoot, "projects", "project-a", "snapshots", "first.json"), "utf8")).resolves.toBe(bytes);
     } finally {
       await rm(base, { recursive: true, force: true });
     }
@@ -109,11 +129,13 @@ describe("GitHub sync", () => {
       await git(clonedRoot, "push", "-q", "origin", "main");
 
       // Local change then sync again — should refuse to merge, not pull --rebase.
-      await writeFile(path.join(repo, "local.json"), "from-local");
+      await currentSnapshot(repo, "second", "from-local");
       const result = await syncToGitHub(repo, bare);
 
       expect(result.errors.length).toBeGreaterThan(0);
       expect(result.errors[0]).toMatch(/does not auto-merge/i);
+      expect(result.pushed).toBe(0);
+      await expect(readFile(path.join(repo, "teammate.json"), "utf8")).rejects.toMatchObject({ code: "ENOENT" });
     } finally {
       await rm(base, { recursive: true, force: true });
     }

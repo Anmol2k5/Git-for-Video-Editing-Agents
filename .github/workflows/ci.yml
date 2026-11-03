@@ -46,6 +46,10 @@ jobs:
     - name: Run Tests
       run: npm run editvcs:test
 
+    - name: Validate built CEP in Chromium
+      if: matrix.os == 'ubuntu-latest' && matrix.node-version == '22.x'
+      run: npm run test:cep-browser
+
     - name: Package CEP panel (unsigned)
       run: npm run package:cep:unsigned
 

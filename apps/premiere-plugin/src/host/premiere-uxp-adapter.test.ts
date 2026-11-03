@@ -117,5 +117,64 @@ describe("Premiere UXP adapter", () => {
 
     expect(host.project).toBeNull();
     expect(host.capabilities.projectPath).toBe(false);
+    expect(host.companionConnected).toBe(false);
+    expect(host.tracked).toBe(false);
+    expect(host.streams).toEqual([]);
+  });
+});
+
+
+describe("UXP prototype readiness", () => {
+  it("does not infer companion tracking, version streams, or changes from a project path", async () => {
+    const host = await createPremierePanelHost({
+      requireModule: () => ({
+        Project: {
+          getActiveProject: async () => ({
+            name: "Film.prproj",
+            path: "D:/work/Film.prproj",
+            getSequences: async () => [{ name: "Main edit" }]
+          })
+        }
+      })
+    });
+
+    expect(host.project?.path).toBe("D:/work/Film.prproj");
+    expect(host.tracked).toBe(false);
+    expect(host.companionConnected).toBe(false);
+    expect(host.streams).toEqual([]);
+    expect(host.changes.summary).toEqual([]);
+  });
+
+  it("does not claim clip or media access when only project identity is exposed", async () => {
+    const adapter = createPremiereUxpAdapter({
+      requireModule: () => ({
+        Project: { getActiveProject: async () => ({ name: "Film.prproj" }) }
+      })
+    });
+
+    expect(await adapter.getCapabilities()).toMatchObject({
+      trackClipRead: false,
+      mediaReferenceRead: false
+    });
+  });
+
+  it("reports clip and media access only for exposed tracks and media readers", async () => {
+    const adapter = createPremiereUxpAdapter({
+      requireModule: () => ({
+        Project: {
+          getActiveProject: async () => ({
+            getSequences: async () => [{
+              videoTracks: [{ clips: [{ projectItem: { getMediaFilePath: () => "D:/media/Intro.mov" } }] }],
+              audioTracks: []
+            }]
+          })
+        }
+      })
+    });
+
+    expect(await adapter.getCapabilities()).toMatchObject({
+      trackClipRead: true,
+      mediaReferenceRead: true
+    });
   });
 });

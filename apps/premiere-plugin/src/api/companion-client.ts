@@ -1,3 +1,11 @@
+import type {
+  CreateSnapshotRequest,
+  CreateSnapshotResponse,
+  PairStartResponse,
+  PairCompleteRequest,
+  PairCompleteResponse
+} from "@editvcs/shared-types";
+
 export interface CompanionClientOptions {
   baseUrl: string;
   token?: string;
@@ -23,10 +31,14 @@ export function createCompanionClient(options: CompanionClientOptions) {
 
   return {
     health: () => request<{ status: string }>("/health"),
-    pair: () => request<{ token: string }>("/pair", { method: "POST" }),
-    createManualSnapshot: (label: string) => request("/snapshots/manual", {
+    startPairing: () => request<PairStartResponse>("/pair/start", { method: "POST" }),
+    completePairing: (input: PairCompleteRequest) => request<PairCompleteResponse>("/pair/complete", {
       method: "POST",
-      body: JSON.stringify({ label })
+      body: JSON.stringify(input)
+    }),
+    createManualSnapshot: (input: CreateSnapshotRequest) => request<CreateSnapshotResponse>("/snapshots/manual", {
+      method: "POST",
+      body: JSON.stringify(input)
     })
   };
 }

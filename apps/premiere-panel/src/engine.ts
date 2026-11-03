@@ -44,6 +44,7 @@ export type CompanionStatus =
   | "unknown"       // Initial state, haven't checked yet
   | "starting"      // Spawning the companion process
   | "connected"     // Healthy and authenticated
+  | "pairing-required" // Healthy, awaiting authorization
   | "reconnecting"  // Was connected, lost connection, auto-restarting
   | "failed";       // Exhausted restart attempts
 
@@ -60,11 +61,20 @@ export class CompanionClient {
   private readonly maxRestarts = 5;
   private readonly baseRestartDelayMs = 2_000;
   private lastSuccessfulConnect = 0;
-  private supervisorLock = false;
+  private supervisorPromise: Promise<boolean> | null = null;
+  private supervisorGeneration = -1;
+  private sessionGeneration = 0;
 
   // Expose for testing/UI
   public get sessionToken() { return this.token; }
-  public set sessionToken(t: string | null) { this.token = t; }
+  public set sessionToken(t: string | null) {
+    this.sessionGeneration++;
+    this.token = t;
+    this.currentProjectId = null;
+  }
+
+  /** Invalidate pending authentication when the panel cancels or unmounts. */
+  cancelAuthentication(): void { this.sessionGeneration++; }
 
   public get status(): CompanionStatus { return this._status; }
 
@@ -100,15 +110,18 @@ export class CompanionClient {
   }
 
   async completePairing(pairingId: string, code: string): Promise<boolean> {
+    const generation = this.sessionGeneration;
     try {
       const res = await this.fetchJson(`/pair/complete`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ pairingId, code })
       });
-      if (!res.ok) return false;
+      if (!res.ok || generation !== this.sessionGeneration) return false;
       const body = res.body as { sessionToken: string };
-      this.token = body.sessionToken;
+      if (typeof body.sessionToken !== "string" || !body.sessionToken) return false;
+      this.sessionToken = body.sessionToken;
+      this.setStatus("connected");
       return true;
     } catch {
       return false;
@@ -117,18 +130,22 @@ export class CompanionClient {
 
   private async request<T>(path: string, init: RequestInit = {}): Promise<T | null> {
     if (!this.token) return null;
+    const token = this.token;
+    const generation = this.sessionGeneration;
     try {
       const res = await this.fetchJson(path, {
         ...init,
         headers: {
           ...(init.headers ?? {}),
-          authorization: `Bearer ${this.token}`,
+          authorization: `Bearer ${token}`,
           "content-type": "application/json"
         }
       });
+      if (generation !== this.sessionGeneration || token !== this.token) return null;
       if (res.status === 401) {
-        this.token = null;
+        this.sessionToken = null;
         this.onUnauthorized?.();
+        return null;
       }
       if (!res.ok) {
         try {
@@ -168,53 +185,81 @@ export class CompanionClient {
    *
    * Returns true if the companion is running and the client is authenticated.
    */
-  async ensureRunning(): Promise<boolean> {
-    // Prevent concurrent supervisor calls
-    if (this.supervisorLock) return this._status === "connected";
-    this.supervisorLock = true;
+  ensureRunning(): Promise<boolean> {
+    const generation = this.sessionGeneration;
+    if (this.supervisorPromise && this.supervisorGeneration === generation) return this.supervisorPromise;
+    this.supervisorGeneration = generation;
+    const attempt = this.ensureRunningAttempt(generation);
+    this.supervisorPromise = attempt;
+    void attempt.finally(() => {
+      if (this.supervisorPromise === attempt) this.supervisorPromise = null;
+    });
+    return attempt;
+  }
 
-    try {
-      // Already connected and healthy?
-      if (await this.isReachable() && this.token) {
-        this.setStatus("connected");
-        this.restartAttempts = 0;
-        this.lastSuccessfulConnect = Date.now();
-        return true;
-      }
-
-      // Reachable but no token? Try to start fresh with auto-pair
-      if (await this.isReachable() && !this.token) {
-        // Server is running but we have no session — it was started externally
-        // or we lost our token. The panel needs to pair manually in this case,
-        // unless we can re-spawn with a fresh auto-pair token.
-        // For zero-config: kill and respawn with auto-pair token.
-        // But we can't kill an external process — just try pairing as fallback
-        this.setStatus("connected");
-        return false; // caller will show pairing UI
-      }
-
-      // Not reachable — need to spawn
-      if (this.restartAttempts >= this.maxRestarts) {
-        this.setStatus("failed");
+  private async ensureRunningAttempt(generation: number): Promise<boolean> {
+    const reachable = await this.isReachable();
+    if (generation !== this.sessionGeneration) return false;
+    if (reachable) {
+      // Health is public. Prove the stored token works before opening the panel.
+      if (!this.token) {
+        this.setStatus("pairing-required");
         return false;
       }
-
-      this.setStatus(this.restartAttempts === 0 ? "starting" : "reconnecting");
-      const success = await this.spawnCompanion();
-
-      if (success) {
-        this.setStatus("connected");
-        this.restartAttempts = 0;
-        this.lastSuccessfulConnect = Date.now();
-        return true;
+      try {
+        const auth = await this.fetchJson("/snapshots", {
+          headers: { authorization: `Bearer ${this.token}` }
+        });
+        if (generation !== this.sessionGeneration) return false;
+        if (auth.status === 401) {
+          this.sessionToken = null;
+          this.setStatus("pairing-required");
+          this.onUnauthorized?.();
+          return false;
+        }
+        if (!auth.ok) {
+          this.setStatus("reconnecting");
+          return false;
+        }
+      } catch {
+        if (generation === this.sessionGeneration) this.setStatus("reconnecting");
+        return false;
       }
-
-      this.restartAttempts++;
-      this.setStatus(this.restartAttempts >= this.maxRestarts ? "failed" : "reconnecting");
-      return false;
-    } finally {
-      this.supervisorLock = false;
+      this.restartAttempts = 0;
+      this.lastSuccessfulConnect = Date.now();
+      this.setStatus("connected");
+      return true;
     }
+
+    if (this.restartAttempts >= this.maxRestarts) {
+      this.setStatus("failed");
+      return false;
+    }
+    this.setStatus(this.restartAttempts === 0 ? "starting" : "reconnecting");
+    const success = await this.spawnCompanion(generation);
+    if (generation !== this.sessionGeneration) return false;
+    if (success) {
+      this.setStatus("connected");
+      this.restartAttempts = 0;
+      this.lastSuccessfulConnect = Date.now();
+      return true;
+    }
+    this.restartAttempts++;
+    this.setStatus(this.restartAttempts >= this.maxRestarts ? "failed" : "reconnecting");
+    return false;
+  }
+
+  /** Clear local authorization immediately; remote revocation is bounded. */
+  async disconnect(): Promise<boolean> {
+    const token = this.token;
+    this.sessionToken = null;
+    if (!token) return true;
+    try {
+      const response = await this.fetchJson("/sessions/revoke", {
+        method: "POST", headers: { authorization: `Bearer ${token}` }
+      });
+      return response.ok;
+    } catch { return false; }
   }
 
   /**
@@ -239,7 +284,7 @@ export class CompanionClient {
    * Spawn the companion process with an auto-pair token.
    * Works only in the CEP environment where `window.require` is available.
    */
-  private async spawnCompanion(): Promise<boolean> {
+  private async spawnCompanion(generation: number): Promise<boolean> {
     // Must be in CEP environment to spawn process
     if (!isCepRuntime() || !(window as any).require) return false;
 
@@ -288,12 +333,13 @@ export class CompanionClient {
 
       for (let i = 0; i < 10; i++) {
         await new Promise(r => setTimeout(r, 500));
-        if (exited) return false;
+        if (exited || generation !== this.sessionGeneration) return false;
         if (await this.isReachable()) {
+          if (generation !== this.sessionGeneration) return false;
           // Another companion may have won the port race. Prove the spawned
           // bootstrap token is accepted before treating this client as paired.
           const auth = await this.fetchJson("/snapshots", { headers: { authorization: `Bearer ${autoPairToken}` } });
-          if (auth.ok) { this.token = autoPairToken; return true; }
+          if (auth.ok && generation === this.sessionGeneration) { this.token = autoPairToken; return true; }
           return false;
         }
       }

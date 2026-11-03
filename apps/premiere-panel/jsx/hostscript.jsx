@@ -10,10 +10,14 @@ $._editvcs = {
         return "";
     },
     
-    saveActiveProject: function() {
+    saveActiveProject: function(expectedPath) {
         try {
             if (app && app.project && app.project.path) {
-                return app.project.save() === 0 ? "SUCCESS" : "FAILED";
+                var project = app.project;
+                var originalPath = project.path;
+                if (expectedPath && originalPath !== expectedPath) return "FAILED";
+                var result = project.save();
+                return result === 0 && app.project === project && project.path === originalPath ? "SUCCESS" : "FAILED";
             }
         } catch (error) { return "FAILED"; }
         return "FAILED";
@@ -23,14 +27,20 @@ $._editvcs = {
         alert(msg);
     },
     
-    getTimelineState: function() {
+    getTimelineState: function(expectedPath) {
+        if (expectedPath && (!app || !app.project || app.project.path !== expectedPath)) {
+            return JSON.stringify({ error: "PROJECT_CHANGED", reason: "Active project changed before metadata capture." });
+        }
         if (!app || !app.project || !app.project.activeSequence) {
             return JSON.stringify({ error: "No active sequence" });
         }
         
-        var seq = app.project.activeSequence;
+        var project = app.project;
+        var projectPath = project.path;
+        var seq = project.activeSequence;
         var state = {
-            projectName: app.project.name,
+            projectName: project.name,
+            projectPath: projectPath,
             sequenceName: seq.name,
             sequenceId: seq.sequenceID !== undefined ? String(seq.sequenceID) : undefined,
             framerate: Number(seq.timebase) > 0 ? 254016000000 / Number(seq.timebase) : undefined,
@@ -102,6 +112,9 @@ $._editvcs = {
         }
         
         // If ExtendScript JSON object is missing, this would fail, but PPro 14+ supports JSON natively.
+        if (app.project !== project || project.path !== projectPath) {
+            return JSON.stringify({ error: "PROJECT_CHANGED", reason: "Active project changed during metadata capture." });
+        }
         return JSON.stringify(state);
     }
 };

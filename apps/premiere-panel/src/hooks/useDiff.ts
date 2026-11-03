@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import type { ProjectVersion } from '../engine';
 import { companionClient as client } from '../engine';
 import { getErrorMessage } from '../utils';
@@ -17,7 +17,22 @@ export function useDiff(currentProjectId: string | null) {
   const [diffLoading, setDiffLoading] = useState(false);
   const [diffError, setDiffError] = useState<string | null>(null);
 
+  const generation = useRef(0);
+  const clearDiff = useCallback(() => {
+    generation.current++;
+    setDiffVersionFrom(null);
+    setDiffVersionTo(null);
+    setDiffResult(null);
+    setDiffError(null);
+    setDiffLoading(false);
+  }, []);
+  useEffect(() => {
+    clearDiff();
+    return () => { generation.current++; };
+  }, [currentProjectId, clearDiff]);
+
   const handleCompare = async (from: ProjectVersion, to: ProjectVersion) => {
+    const request = ++generation.current;
     setDiffVersionFrom(from);
     setDiffVersionTo(to);
     setDiffLoading(true);
@@ -30,23 +45,17 @@ export function useDiff(currentProjectId: string | null) {
         return;
       }
       const result = await client.getChanges(currentProjectId, from.id, to.id);
+      if (request !== generation.current) return;
       if (!result) {
         setDiffError("Failed to fetch changes comparison.");
       } else {
         setDiffResult(result);
       }
     } catch (err: unknown) {
-      setDiffError(getErrorMessage(err));
+      if (request === generation.current) setDiffError(getErrorMessage(err));
     } finally {
-      setDiffLoading(false);
+      if (request === generation.current) setDiffLoading(false);
     }
-  };
-
-  const clearDiff = () => {
-    setDiffVersionFrom(null);
-    setDiffVersionTo(null);
-    setDiffResult(null);
-    setDiffError(null);
   };
 
   return {

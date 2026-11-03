@@ -1,6 +1,8 @@
-@import "tailwindcss";
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
 
-@theme {
+:root {
   --color-bg-base: #0d0d12;
   --color-bg-surface: #14141b;
   --color-bg-elevated: #1c1c26;

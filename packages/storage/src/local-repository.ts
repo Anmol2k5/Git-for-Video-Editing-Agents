@@ -3,28 +3,26 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { hashFileSha256 } from "./hash-file";
 import type { Snapshot } from "@editvcs/shared-types";
-import { writeJsonAtomic } from "./write-json";
 import { storageIdentifierSchema, sha256Schema, snapshotSchema } from "./schemas";
+import { readRepositorySnapshot, relativeRepositoryPath, repositoryDirectory, repositoryFile, snapshotPathIdentity, verifyRepositoryObject, writeRepositoryFileExclusive } from "./repository-files";
 
 export class LocalSnapshotRepository {
   constructor(private rootDir: string) {}
 
   private healthWarnings: string[] = [];
 
-  getHealthWarnings(): string[] {
-    return this.healthWarnings;
+  private warn(warning: string): void {
+    const bounded = warning.slice(0, 2048);
+    if (this.healthWarnings.length < 100 && !this.healthWarnings.includes(bounded)) this.healthWarnings.push(bounded);
   }
 
-  clearHealthWarnings(): void {
-    this.healthWarnings = [];
-  }
+  getHealthWarnings(): string[] { return [...this.healthWarnings]; }
+  clearHealthWarnings(): void { this.healthWarnings = []; }
 
   async init(): Promise<void> {
-    await fs.mkdir(path.join(this.rootDir, "objects"), { recursive: true });
-    await fs.mkdir(path.join(this.rootDir, "objects", ".tmp"), { recursive: true });
-    await fs.mkdir(path.join(this.rootDir, "temp"), { recursive: true });
-    await fs.mkdir(path.join(this.rootDir, "logs"), { recursive: true });
-    await fs.mkdir(path.join(this.rootDir, "recovery"), { recursive: true });
+    for (const relative of ["objects", "objects/.tmp", "temp", "logs", "recovery"]) {
+      await repositoryDirectory(this.rootDir, relative, true);
+    }
   }
 
   async checkHealth(): Promise<{ ok: boolean; error?: string }> {
@@ -32,19 +30,12 @@ export class LocalSnapshotRepository {
       await this.init();
       const testFile = path.join(this.rootDir, `.health-${randomUUID()}`);
       const probe = await fs.open(testFile, "wx", 0o600);
-      try {
-        await probe.writeFile("ok");
-      } finally {
-        await probe.close();
-        await fs.unlink(testFile);
-      }
-      if (this.healthWarnings.length > 0) {
-        return { ok: false, error: `Repository health warnings: ${this.healthWarnings.join("; ")}` };
-      }
+      try { await probe.writeFile("ok"); }
+      finally { await probe.close(); await fs.unlink(testFile); }
+      if (this.healthWarnings.length > 0) return { ok: false, error: `Repository health warnings: ${this.healthWarnings.join("; ")}` };
       return { ok: true };
     } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : String(e);
-      return { ok: false, error: msg };
+      return { ok: false, error: e instanceof Error ? e.message : String(e) };
     }
   }
 
@@ -56,77 +47,61 @@ export class LocalSnapshotRepository {
   async publishObject(tempPath: string, expectedHash: string): Promise<string> {
     sha256Schema.parse(expectedHash);
     await this.init();
-    const prefix = expectedHash.slice(0, 2);
-    const objectDir = path.join(this.rootDir, "objects", prefix);
-    await fs.mkdir(objectDir, { recursive: true });
-    
-    const finalPath = path.join(objectDir, expectedHash);
-    
+    const relative = relativeRepositoryPath(this.rootDir, tempPath);
+    if (path.dirname(relative) !== path.join("objects", ".tmp")) throw new Error("Object publication requires a repository temporary object");
+    const temp = await repositoryFile(this.rootDir, relative);
+    if (await hashFileSha256(temp) !== expectedHash) throw new Error("Temporary object failed hash integrity verification");
+    const directory = await repositoryDirectory(this.rootDir, path.join("objects", expectedHash.slice(0, 2)), true);
+    const finalPath = path.join(directory, expectedHash);
     try {
-      const existingStat = await fs.stat(finalPath);
-      const tempStat = await fs.stat(tempPath);
-      if (existingStat.size === tempStat.size) {
-        const existingHash = await hashFileSha256(finalPath);
-        if (existingHash === expectedHash) {
-          await fs.unlink(tempPath).catch(() => {});
-          return finalPath;
-        }
-      }
-    } catch {
-      // Proceed to rename
+      await fs.link(temp, finalPath);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+      await verifyRepositoryObject(this.rootDir, expectedHash);
     }
-
-    await fs.rename(tempPath, finalPath);
+    await fs.unlink(temp);
     return finalPath;
   }
 
   async storeProjectObject(sourcePath: string) {
     const tempPath = await this.createTempObjectPath();
-    await fs.copyFile(sourcePath, tempPath);
-    const sha256 = await hashFileSha256(tempPath);
-    const finalPath = await this.publishObject(tempPath, sha256);
-    return {
-      sha256,
-      objectPath: finalPath
-    };
+    try {
+      const sourceStat = await fs.lstat(sourcePath);
+      if (!sourceStat.isFile() || sourceStat.isSymbolicLink()) throw new Error("Project source must be a regular file");
+      await fs.copyFile(sourcePath, tempPath);
+      const sha256 = await hashFileSha256(tempPath);
+      const finalPath = await this.publishObject(tempPath, sha256);
+      return { sha256, objectPath: finalPath };
+    } finally {
+      await fs.unlink(tempPath).catch(() => {});
+    }
   }
 
   async saveSnapshot(snapshot: Snapshot) {
-    snapshotSchema.parse(snapshot);
+    const validated = snapshotSchema.parse(snapshot);
     await this.init();
-    const snapDir = path.join(this.rootDir, "projects", snapshot.projectId, "snapshots");
-    await fs.mkdir(snapDir, { recursive: true });
-    await writeJsonAtomic(path.join(snapDir, `${snapshot.id}.json`), snapshot);
+    await verifyRepositoryObject(this.rootDir, validated.projectFile.sha256, validated.projectFile.byteSize);
+    const relative = path.join("projects", validated.projectId, "snapshots", `${validated.id}.json`);
+    const content = JSON.stringify(validated, null, 2);
+    try {
+      await writeRepositoryFileExclusive(this.rootDir, relative, content);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+      const file = await repositoryFile(this.rootDir, relative);
+      if (await fs.readFile(file, "utf8") !== content) throw new Error("Snapshot ID already exists with different metadata");
+    }
   }
 
   async loadAndValidateSnapshot(filePath: string): Promise<Snapshot | null> {
-    const { snapshotSchema } = await import("./schemas");
     try {
-      const content = await fs.readFile(filePath, "utf8");
-      const parsedObj = JSON.parse(content);
-      
-      const validationResult = snapshotSchema.safeParse(parsedObj);
-      if (!validationResult.success) {
-        const fileName = path.basename(filePath);
-        const recoveryPath = path.join(this.rootDir, "recovery", `${Date.now()}-${fileName}`);
-        
-        console.warn(`Validation failed for snapshot ${fileName}:`, validationResult.error.message);
-        this.healthWarnings.push(`Validation failed for snapshot ${fileName}: ${validationResult.error.message}`);
-        
-        // Move invalid file to recovery folder
-        await fs.rename(filePath, recoveryPath).catch(async () => {
-          await fs.copyFile(filePath, recoveryPath);
-          await fs.unlink(filePath);
-        });
-        
-        return null;
-      }
-      return validationResult.data as Snapshot;
-    } catch (err: unknown) {
-      const fileName = path.basename(filePath);
-      const msg = err instanceof Error ? err.message : String(err);
-      console.error(`Failed to read or parse snapshot at ${fileName}:`, err);
-      this.healthWarnings.push(`Failed to read/parse snapshot at ${fileName}: ${msg}`);
+      const relative = relativeRepositoryPath(this.rootDir, filePath);
+      snapshotPathIdentity(relative);
+      const snapshot = await readRepositorySnapshot(this.rootDir, relative);
+      await verifyRepositoryObject(this.rootDir, snapshot.projectFile.sha256, snapshot.projectFile.byteSize);
+      return snapshot;
+    } catch (error: unknown) {
+      // Reads never move or delete input files; corrupt snapshots remain available for recovery.
+      this.warn(`Snapshot ${path.basename(filePath)} unavailable: ${error instanceof Error ? error.message : String(error)}`);
       return null;
     }
   }
@@ -135,49 +110,29 @@ export class LocalSnapshotRepository {
     if (projectId !== undefined) storageIdentifierSchema.parse(projectId);
     await this.init();
     const snapshots: Snapshot[] = [];
-
-    if (projectId) {
-      const snapDir = path.join(this.rootDir, "projects", projectId, "snapshots");
-      try {
-        const files = await fs.readdir(snapDir);
-        for (const file of files) {
-          if (file.endsWith(".json")) {
-            const snap = await this.loadAndValidateSnapshot(path.join(snapDir, file));
-            if (snap) snapshots.push(snap);
+    let projectIds = projectId ? [projectId] : [];
+    try {
+      if (!projectId) {
+        const projects = await repositoryDirectory(this.rootDir, "projects");
+        projectIds = await fs.readdir(projects);
+      }
+      for (const id of projectIds) {
+        try {
+          storageIdentifierSchema.parse(id);
+          const relative = path.join("projects", id, "snapshots");
+          const directory = await repositoryDirectory(this.rootDir, relative);
+          for (const file of await fs.readdir(directory)) {
+            if (!file.endsWith(".json")) continue;
+            const snapshot = await this.loadAndValidateSnapshot(path.join(directory, file));
+            if (snapshot) snapshots.push(snapshot);
           }
-        }
-      } catch (err: unknown) {
-        if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
-          console.error(`Failed to read snapshots for project ${projectId}:`, err);
+        } catch (error: unknown) {
+          if ((error as NodeJS.ErrnoException).code !== "ENOENT") this.warn(`Project ${id} unavailable: ${error instanceof Error ? error.message : String(error)}`);
         }
       }
-    } else {
-      const projectsDir = path.join(this.rootDir, "projects");
-      try {
-        const projectFolders = await fs.readdir(projectsDir);
-        for (const folder of projectFolders) {
-          const snapDir = path.join(projectsDir, folder, "snapshots");
-          try {
-            const files = await fs.readdir(snapDir);
-            for (const file of files) {
-              if (file.endsWith(".json")) {
-                const snap = await this.loadAndValidateSnapshot(path.join(snapDir, file));
-                if (snap) snapshots.push(snap);
-              }
-            }
-          } catch (err: unknown) {
-            if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
-              console.error(`Failed to read snapshots in ${snapDir}:`, err);
-            }
-          }
-        }
-      } catch (err: unknown) {
-        if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
-          console.error("Failed to list projects directory:", err);
-        }
-      }
+    } catch (error: unknown) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") this.warn(`Projects unavailable: ${error instanceof Error ? error.message : String(error)}`);
     }
-
     return snapshots.sort((left, right) => right.createdAt.localeCompare(left.createdAt));
   }
 }

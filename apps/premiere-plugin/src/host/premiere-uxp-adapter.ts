@@ -89,12 +89,23 @@ export function createPremiereUxpAdapter(options: PremiereUxpAdapterOptions = {}
         return unavailableCapabilities;
       }
 
+      const sequences = await readSequences(project);
+      const trackClipRead = sequences.length > 0 && sequences.every(sequence =>
+        Array.isArray(sequence.videoTracks) && Array.isArray(sequence.audioTracks) &&
+        [...sequence.videoTracks, ...sequence.audioTracks].every(track => Array.isArray(track.clips))
+      );
+      const clips = sequences.flatMap(sequence =>
+        [...(sequence.videoTracks ?? []), ...(sequence.audioTracks ?? [])].flatMap(track => track.clips ?? [])
+      );
+
       return {
         projectPath: Boolean(project.path),
         activeSequenceRead: typeof project.getActiveSequence === "function",
         sequenceInventoryRead: typeof project.getSequences === "function",
-        trackClipRead: true,
-        mediaReferenceRead: true,
+        trackClipRead,
+        mediaReferenceRead: trackClipRead && clips.length > 0 && clips.every(clip =>
+          typeof clip.projectItem?.getMediaFilePath === "function"
+        ),
         saveEventHooks: false,
         compositionInventoryRead: false,
         layerRead: false,
@@ -168,28 +179,25 @@ export function createPremiereUxpAdapter(options: PremiereUxpAdapterOptions = {}
 
 export async function createPremierePanelHost(options: PremiereUxpAdapterOptions = {}) {
   const adapter = createPremiereUxpAdapter(options);
-  const [project, capabilities, projectManifest] = await Promise.all([
+  const [project, capabilities] = await Promise.all([
     adapter.getCurrentProject(),
-    adapter.getCapabilities(),
-    adapter.collectManifest()
+    adapter.getCapabilities()
   ]);
-  const manifest = projectManifest as PremiereProjectManifest;
 
+  // Project inspection alone does not establish a companion session or tracking.
   return {
     project,
-    tracked: Boolean(project?.path),
-    companionConnected: true,
+    tracked: false,
+    companionConnected: false,
     capabilities,
     snapshots: [],
     changes: {
-      summary: manifest.sequences.length > 0
-        ? [`Read ${manifest.sequences.length} sequence${manifest.sequences.length === 1 ? "" : "s"} from Premiere`]
-        : [],
+      summary: [],
       unsupported: capabilities.trackClipRead
         ? []
         : ["Could not inspect clip-level changes in this Premiere version"]
     },
-    streams: ["Main edit", "Client feedback", "Alternate intro", "Director's cut"]
+    streams: []
   };
 }
 

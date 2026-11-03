@@ -4,6 +4,17 @@ Baseline: `9b121263621645e4662a10e7a61a58e44b75a161`.
 
 ## Implementation delivered
 
+Further verified fixes completed on 2026-11-04:
+
+- Process ownership is exclusive across independent processes, atomically published and checked before listening. Heartbeats/release cannot replace another owner, ambiguous records fail closed, ownership loss triggers nonzero shutdown, and shutdown awaits actual request/watcher draining.
+- Snapshot reads/publication validate containment, regular files, metadata identity, object hashes/sizes and immutable IDs. Corrupt inputs stay available for recovery; warnings are bounded/deduplicated. New history is blocked when recovery is required, and failed snapshots clean temporary copies.
+- Local/Git sync helpers transfer the current snapshot layout, recurse existing prefixes and exclude private registry/log data. Git errors/counts/push targets and byte preservation are validated using local bare repositories. The release sync/cloud endpoints remain explicitly unavailable.
+- Panel authorization is proved against protected APIs; disconnect and obsolete pairing, diff, restore, save and supervisor responses cannot revive or overwrite newer state. Native save/metadata operations are bound to the expected project path.
+- CEP frontend now targets Chromium 88 using compatible Tailwind 3/PostCSS output. Built-resource and CSS compatibility gates plus a real installed-Chromium browser boot/style/save regression are automated. Adobe CEP itself is still an external acceptance gate.
+- UXP production mode is an explicitly unavailable prototype with honest connection/tracking/stream state and disabled unwired actions. Demo fixtures require an explicit flag; the client uses the actual two-step pairing/project-ID contracts.
+- Functional process smoke now restores both stored A and B after restart.
+
+
 The approved local-first hardening is implemented in the working tree. The findings table below records the **pre-fix baseline**, not a list of defects all still outstanding.
 
 - Unique exclusive JSON temp files, file sync/cleanup, serialized durable registration and fail-closed corrupt-registry loading prevent the reproduced metadata races and phantom registrations.
@@ -18,7 +29,7 @@ The approved local-first hardening is implemented in the working tree. The findi
 
 An independent whole-change review found four additional important issues (duplicate watchers, late save/history state, incomplete sequence coverage and self-comparison confidence). Each was addressed with a regression that reproduced the failure. Final validation results are recorded below.
 
-### Latest validation evidence — 2026-11-03
+### Latest validation evidence — 2026-11-04
 
 Validated in this Linux cloud checkout with Node 24.19.0/npm 11.9.0:
 
@@ -27,14 +38,16 @@ Validated in this Linux cloud checkout with Node 24.19.0/npm 11.9.0:
 | `npm ci --no-audit --no-fund` | Passed with the root lockfile |
 | `npm run editvcs:build:packages` | Passed |
 | `npm run verify` | Repository verification, all TypeScript checks, all workspace builds and all tests passed |
-| Workspace Vitest suites | 107 tests passed: companion 41, CEP 16, UXP 10, core 5, diff 17, adapters 2, shared types 2, storage 14 |
+| Workspace Vitest suites | 206 tests passed: companion 70, CEP 39, UXP 20, core 5, diff 17, adapters 2, shared types 2, storage 51 |
 | `node --test scripts/packaging.test.js` (included in verify) | 3 tests passed |
-| `node --test scripts/companion-smoke.test.js` (included in verify) | 6 tests passed, including unrelated-listener, dead/hung-child, graceful failure and real process lifecycle cases; total 116/116, no skipped tests in the final full run |
+| `node --test scripts/companion-smoke.test.js` (included in verify) | 6 tests passed, including unrelated-listener, dead/hung-child, graceful failure and real process lifecycle cases; all process smoke cases passed, with no skipped tests |
+| `npm run test:cep-compat` (included in verify) | 2 built CSS/resource compatibility tests passed; full verify total 217/217 |
+| `npm run test:cep-browser` | 1 real Chromium build/render/save test passed; 218 total automated checks including browser |
 | `npm audit --json` | 0 reported vulnerabilities across production and development dependencies |
 | `npm run package:cep:unsigned` | Passed; complete bundle under `release/EditVCS-CEP`, ZIP at `release/EditVCS-CEP-unsigned.zip` |
 | `node scripts/companion-smoke-test.js` | Owned bundled process/session verified; snapshot A/B, deduplication, restore bytes, clean IPC shutdown/PID release, crash recovery, retained registry/history and expired old sessions passed |
 
-The initial independent review's four important findings and the related watcher stop/start overlap are fixed. The follow-up review's graceful-shutdown false positive is also fixed. New regressions were observed failing before their fixes; a mutation check also proved the delayed-history guard is covered. Targeted reproduction runs excluded unrelated cases by name; the final full run executed all 116 tests without skips.
+The initial independent review's four important findings and the related watcher stop/start overlap are fixed. The follow-up review's graceful-shutdown false positive is also fixed. New regressions were observed failing before their fixes; a mutation check also proved the delayed-history guard is covered. Targeted reproduction runs excluded unrelated cases by name; the latest full run executed all 217 verification tests without skips, plus the separate passing browser test.
 
 ### Follow-ups completed on 2026-11-03
 
@@ -48,11 +61,11 @@ The old fixed-port health-only smoke test was reproduced falsely passing when it
 
 An independent follow-up review identified a shutdown false positive. Negative actual-bundle wrappers now prove that a shutdown crash or hang fails validation. The explicit graceful phase requires a private parent IPC shutdown, clean exit code 0 with no signal/force escalation, and PID-file removal. The finally-cleanup path can still terminate only its owned child forcibly within a deadline. No remote shutdown API was added. The CI workflow will retain the unsigned developer ZIP as an artifact after its selected job passes; no remote CI run or upload was performed here.
 
-Optional coverage follow-up: the functional smoke restores stored A after restart and verifies active B remains intact; restoring stored B as well would add direct coverage for both persisted objects. This does not change the current workflow or replace real Premiere project-opening acceptance.
+The former optional B-restore coverage is now included: both persisted snapshots are restored after restart and their bytes checked independently, while the active project remains B. Synthetic files still do not replace real Premiere project-opening acceptance.
 
 ## Verdict and scope
 
-EditVCS is a pre-alpha implementation with a working automated local snapshot/restore slice. It is not ready for a public production release. The build and existing 52 tests pass on Linux with Node 24.19.0/npm 11.9.0, but important user flows and failure cases are absent from those tests. No live Premiere acceptance test or Windows/macOS installer test was performed here.
+EditVCS is a pre-alpha implementation with a working automated local snapshot/restore slice. It is not ready for a public production release. The original audit baseline passed 52 tests but missed important flows/failure cases. The latest expanded validation above covers 218 automated checks including a real browser on Linux with Node 24.19.0/npm 11.9.0. No live Premiere acceptance test or Windows/macOS installer test was performed here.
 
 The review covers all applications and shared-package subsystems, host bridge scripts, packaging, CI, dependency manifests and existing tests/documentation. Adobe's vendored CSInterface implementation and generated/vendor assets are not independently security-audited. This is a source review with targeted runtime reproductions, not a penetration-test certification.
 
@@ -112,4 +125,6 @@ A reasonable initial local-first release budget is **2–4 working weeks**, subj
 
 ## Current release gates
 
-The automated local-first hardening is implemented. Production release remains blocked on actual supported Windows/macOS Premiere installations, frontend compatibility with each supported CEP/CEF version (including modern Tailwind/Vite output), standalone Node discovery/runtime distribution, signed install/update/uninstall and real project acceptance. No Windows/macOS, Premiere or successful certificate signing run occurred here. CI has not been pushed or run remotely for these changes. Cloud, streams, After Effects and production UXP remain unsupported rather than silently enabled.
+The automated local-first hardening is implemented. Production release remains blocked on actual supported Windows/macOS Premiere installations, actual native CEP/CEF rendering and host compatibility, standalone Node discovery/runtime distribution, signed install/update/uninstall and real project acceptance. No Windows/macOS, Premiere or successful certificate signing run occurred here. Changes are maintained on the feature branch; no successful remote CI result is asserted for this latest pass. Cloud, streams, After Effects and production UXP remain unsupported rather than silently enabled.
+
+Final independent review reproduced a Git privacy bypass through merge-commit trees. Both history checks now inspect every distinct reachable tree, including merges/all parents, with replacement objects disabled. A local bare Git regression confirms refusal before any ref/private blob transfer. No other Critical/Important findings were established in this review.

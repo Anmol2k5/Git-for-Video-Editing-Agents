@@ -23,7 +23,12 @@ export function App({ host }: { host: PanelHost }) {
     <div style={{ background: '#b45309', color: '#ffffff', padding: '4px 8px', fontSize: '11px', fontWeight: 'bold', textAlign: 'center', letterSpacing: '0.05em' }}>
       DEMO DATA (MOCK MODE)
     </div>
-  ) : null;
+  ) : (
+    <section className="status-banner" role="status">
+      UXP prototype: version history, companion pairing, save points, restore, and cloud backup are unavailable.
+      Use the Premiere CEP panel for local version history.
+    </section>
+  );
 
   if (!host.project) {
     return (

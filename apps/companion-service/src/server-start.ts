@@ -6,121 +6,92 @@ import { PidManager } from "./pid-manager";
 const PORT = Number(process.env.EDITVCS_COMPANION_PORT) || config.port;
 const STORAGE_ROOT = config.storageRoot;
 const AUTO_PAIR_TOKEN = process.env.EDITVCS_AUTO_PAIR_TOKEN;
+const pidManager = new PidManager(STORAGE_ROOT, PORT, error => {
+  console.error("EditVCS companion storage ownership lost:", error);
+  void shutdown("storage ownership lost", 1);
+});
 
-const pidManager = new PidManager(STORAGE_ROOT, PORT);
-
-// ── Graceful shutdown ──────────────────────────────────────────────────────
 let isShuttingDown = false;
 let httpServer: import("node:http").Server | null = null;
+let startupTask: Promise<void>;
+let shutdownTask: Promise<void> | null = null;
+let shutdownExitCode = 0;
 
-async function shutdown(signal: string): Promise<void> {
-  if (isShuttingDown) return;
+function shutdown(signal: string, exitCode = 0): Promise<void> {
+  shutdownExitCode = Math.max(shutdownExitCode, exitCode);
+  if (shutdownTask) return shutdownTask;
   isShuttingDown = true;
-
-  console.log(`\nEditVCS companion shutting down (${signal})...`);
-
-  // 1. Stop heartbeat immediately
-  pidManager.stopHeartbeat();
-
-  // 2. Close HTTP server (stop accepting new connections)
-  if (httpServer) {
-    await new Promise<void>((resolve) => {
-      httpServer!.close(() => resolve());
-      // Force-close after 3 seconds if connections are hanging
-      setTimeout(() => resolve(), 3_000);
-    });
-  }
-
-  // 3. Release PID file
-  await pidManager.release();
-
-  console.log("EditVCS companion stopped.");
-  process.exit(0);
+  shutdownTask = (async () => {
+    console.log(`\nEditVCS companion shutting down (${signal})...`);
+    pidManager.stopHeartbeat();
+    try {
+      // A signal can arrive while ownership or HTTP binding is in flight.
+      // Finish startup before closing its resources and releasing its claim.
+      await startupTask.catch(() => undefined);
+      if (httpServer) {
+        await new Promise<void>((resolve, reject) => {
+          httpServer!.close(error => error ? reject(error) : resolve());
+        });
+      }
+      // server.close completes after its active watchers have drained. Keep
+      // storage exclusively owned until that callback really succeeds.
+      await pidManager.release();
+      console.log("EditVCS companion stopped.");
+    } catch (error) {
+      shutdownExitCode = 1;
+      console.error("EditVCS companion shutdown failed:", error);
+      // Leave ownership in place on a failed drain. Process death establishes
+      // a safe takeover; another writer must never start while this one lives.
+    }
+    process.exit(shutdownExitCode);
+  })();
+  return shutdownTask;
 }
 
-// ── Crash handlers ─────────────────────────────────────────────────────────
-// These ensure the process exits with a non-zero code on unhandled errors,
-// so the supervisor (CEP panel) knows to restart it.
-
-process.on("uncaughtException", async (err) => {
-  console.error("EditVCS companion FATAL uncaught exception:", err);
-  try {
-    pidManager.stopHeartbeat();
-    await pidManager.release();
-  } catch { /* best-effort cleanup */ }
-  process.exit(1);
+process.on("uncaughtException", error => {
+  console.error("EditVCS companion FATAL uncaught exception:", error);
+  void shutdown("uncaught exception", 1);
 });
-
-process.on("unhandledRejection", async (reason) => {
+process.on("unhandledRejection", reason => {
   console.error("EditVCS companion FATAL unhandled rejection:", reason);
-  try {
-    pidManager.stopHeartbeat();
-    await pidManager.release();
-  } catch { /* best-effort cleanup */ }
-  process.exit(1);
+  void shutdown("unhandled rejection", 1);
 });
+process.on("SIGTERM", () => { void shutdown("SIGTERM"); });
+process.on("SIGINT", () => { void shutdown("SIGINT"); });
 
-process.on("SIGTERM", () => shutdown("SIGTERM"));
-process.on("SIGINT", () => shutdown("SIGINT"));
-
-// An owned parent (for example the functional release validator) can request
-// graceful shutdown over a private Node IPC channel on every platform.
-// No HTTP endpoint or untrusted web content can send this message.
+// Owned parents can request graceful shutdown over private Node IPC on every
+// platform. This does not expose a shutdown endpoint to web content.
 process.on("message", (message: unknown) => {
   if (message && typeof message === "object" && "type" in message && message.type === "editvcs:shutdown") {
     void shutdown("parent IPC request");
   }
 });
-
-// Windows: handle Ctrl+C in console
 if (process.platform === "win32") {
-  process.on("SIGHUP", () => shutdown("SIGHUP"));
+  process.on("SIGHUP", () => { void shutdown("SIGHUP"); });
 }
 
-// ── Startup ────────────────────────────────────────────────────────────────
 async function start(): Promise<void> {
   console.log(`Starting EditVCS companion service with storage root: ${STORAGE_ROOT}`);
+  // acquire performs stale-owner recovery and exclusion together. No HTTP
+  // listener, watcher, or request may write storage before this claim succeeds.
+  await pidManager.acquire(AUTO_PAIR_TOKEN);
+  if (isShuttingDown) return;
+  pidManager.startHeartbeat();
 
-  // Check for stale PID from a crashed previous instance
-  const status = await PidManager.isRunning(STORAGE_ROOT);
-  if (status.running) {
-    console.log(`Another companion appears to be running (PID ${status.pid}, port ${status.port}).`);
-    console.log("If this is incorrect, delete the PID file and retry.");
-    process.exit(0);
-  }
-  if (status.stale) {
-    console.log(`Clearing stale PID file from crashed companion (PID ${status.pid}).`);
-    await PidManager.clearStale(STORAGE_ROOT);
-  }
-
-  // Register auto-pair token if provided (for zero-config CEP auto-start)
   if (AUTO_PAIR_TOKEN) {
     console.log("Auto-pairing token provided. Registering session...");
     sessionManager.createSessionWithToken(AUTO_PAIR_TOKEN);
   }
-
-  try {
-    httpServer = await createServer({ port: PORT, storageRoot: STORAGE_ROOT });
-
-    httpServer.on("error", async (err) => {
-      console.error("EditVCS companion server error:", err);
-      try {
-        pidManager.stopHeartbeat();
-        await pidManager.release();
-      } catch { /* best-effort */ }
-      process.exit(1);
-    });
-
-    // Acquire PID file and start heartbeat
-    await pidManager.acquire(AUTO_PAIR_TOKEN);
-    pidManager.startHeartbeat();
-
-    console.log(`EditVCS companion listening on http://127.0.0.1:${PORT}`);
-  } catch (err) {
-    console.error("Failed to initialize server:", err);
-    process.exit(1);
-  }
+  httpServer = await createServer({ port: PORT, storageRoot: STORAGE_ROOT });
+  httpServer.on("error", error => {
+    console.error("EditVCS companion server error:", error);
+    void shutdown("server error", 1);
+  });
+  if (!isShuttingDown) console.log(`EditVCS companion listening on http://127.0.0.1:${PORT}`);
 }
 
-start();
-
+startupTask = start();
+void startupTask.catch(error => {
+  console.error("Failed to initialize server:", error);
+  void shutdown("startup failure", 1);
+});

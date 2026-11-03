@@ -13,15 +13,15 @@ export function TrackedProjectState({ host, onCreateSavePoint }: TrackedProjectS
       <header className="panel-header">
         <div>
           <h1>{host.project?.name ?? "Premiere project"}</h1>
-          <p>Cloud: Not connected</p>
+          <p>{host.isMock ? "Cloud: Not connected" : "Cloud: Unavailable in this prototype"}</p>
         </div>
-        <button onClick={onCreateSavePoint}>Create Save Point</button>
+        <button disabled={!host.isMock} onClick={onCreateSavePoint} title={host.isMock ? "Open a demo preview; no save point will be created." : "Save points are unavailable in this prototype."}>Create Save Point</button>
       </header>
 
       {!host.companionConnected && (
         <section className="status-banner">
-          <span>Companion service not running</span>
-          <button>Retry</button>
+          <span>{host.isMock ? "Companion service not running" : "Companion connection is unavailable in this UXP prototype."}</span>
+          <button disabled title="Companion connection retry is unavailable in this prototype.">Retry</button>
         </section>
       )}
 
@@ -33,15 +33,16 @@ export function TrackedProjectState({ host, onCreateSavePoint }: TrackedProjectS
 
       <label className="stream-control">
         Version stream
-        <select defaultValue="Main edit" aria-label="Version stream">
-          {host.streams.map((stream: string) => (
+        <select disabled defaultValue={host.streams?.[0] ?? ""} aria-label="Version stream" title="Switching version streams is unavailable in this prototype.">
+          {!host.streams?.length && <option value="">Unavailable in this prototype</option>}
+          {(host.streams ?? []).map((stream: string) => (
             <option key={stream}>{stream}</option>
           ))}
         </select>
       </label>
 
-      <VersionHistory snapshots={host.snapshots} />
-      <CompareView summary={host.changes.summary} unsupported={host.changes.unsupported} />
+      <VersionHistory snapshots={host.snapshots ?? []} />
+      <CompareView summary={host.changes?.summary ?? []} unsupported={host.changes?.unsupported ?? []} />
       <RestoreDialog />
     </main>
   );

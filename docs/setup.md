@@ -81,3 +81,13 @@ Run `npm run editvcs:build:packages && npm run verify` for repository verificati
 Health failures keep filesystem details in the companion's local console log and return a generic public response. Repeated identical failures are logged once until the failure changes or a successful probe resets the state. A dead PID owner can restart immediately; an existing owner with an old heartbeat is kept rather than overwritten. Diagnose a stale/reused PID record locally before removing it.
 
 The file-loaded CEP panel uses the opaque Origin `null`; this origin is explicitly supported while bearer authentication continues to protect project data. The packaged extension declares Premiere version range `[23.0,99.9]` (2023+). Native rendering and Node discovery still need acceptance on actual supported editing workstations.
+
+## CEP browser build checks
+
+The frontend targets Chromium 88, following [Adobe CEP 11.1 runtime documentation](https://github.com/Adobe-CEP/CEP-Resources/blob/master/CEP_11.x/Documentation/CEP%2011.1%20HTML%20Extension%20Cookbook.md). Tailwind 3/PostCSS generates CSS without unsupported cascade layers, registered properties or modern color functions. `npm run test:cep-compat` checks built CSS and local resources.
+
+`npm run test:cep-browser` exercises the built panel/SDK in an installed Chromium/Chrome browser with controlled native and HTTP fixtures. Set `EDITVCS_CHROMIUM_EXECUTABLE` if the browser is not in a standard location. This runs in the selected Linux CI job. It checks rendering/styles/save behavior; it does not pretend the installed modern browser is the actual Adobe CEF runtime.
+
+A companion keeps an exclusive PID ownership claim until its HTTP requests and file watchers drain. Corrupt or unreadable ownership records block startup; diagnose locally before removing them, and never remove a live process's claim. Heartbeat ownership loss shuts down the instance instead of continuing to write under another claim.
+
+Sync remains unavailable through the release UI/API. The exported experimental storage helpers now validate current metadata/object layout and exclude private registry/log files. Pre-existing Git history with private/unsupported paths is refused rather than rewritten; use a clean dedicated sync repository. Filesystems without the required hard-link primitives fail safely, so validate any NAS/external target separately.

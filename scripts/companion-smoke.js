@@ -161,6 +161,8 @@ export async function runCompanionSmoke({ companionPath = defaultCompanion, port
     assert.notEqual(afterRestart.restoredPath, restored.restoredPath);
     assert.equal(await readFile(afterRestart.restoredPath, "utf8"), "EditVCS smoke project A");
     assert.equal(await readFile(restored.restoredPath, "utf8"), "EditVCS smoke project A");
+    const restoredSecond = await api(record, token, "/snapshots/restore-copy", { projectId, snapshotId: second.snapshot.id, destinationDirectory: restoreDirectory });
+    assert.equal(await readFile(restoredSecond.restoredPath, "utf8"), "EditVCS smoke project B");
     assert.equal(await readFile(project, "utf8"), "EditVCS smoke project B");
     return { snapshots: 2, restoreVerified: true, restartVerified: true };
   } finally {

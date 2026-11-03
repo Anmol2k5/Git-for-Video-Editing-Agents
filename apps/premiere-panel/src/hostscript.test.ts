@@ -20,3 +20,11 @@ it("does not report a nonzero Premiere save result as success", () => {
   expect(host(1).saveActiveProject()).not.toBe("SUCCESS");
   expect(host(0).saveActiveProject()).toBe("SUCCESS");
 });
+
+it('does not save a different project from the one requested by the panel', () => {
+  expect(host(0).saveActiveProject('/tmp/Other.prproj')).toBe('FAILED');
+});
+it('rejects metadata for a different project from the requested save point', () => {
+  const state = JSON.parse(host(0).getTimelineState('/tmp/Other.prproj'));
+  expect(state.error).toBe('PROJECT_CHANGED');
+});
